@@ -1,0 +1,19 @@
+# Environment
+.env
+docker/.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Data
+data/
+logs/
+
+# Database backups
+*.sql.bak
+backup_*.sql

@@ -1,11 +1,15 @@
 """
-Rule Engine - Deteção baseada em regras SQL
-Suporta dois modos:
-  --mode historical   Analisa todo o historico (janela larga, corre uma vez)
-  --mode realtime     Analisa janela recente em loop continuo (producao)
+Rule Engine - Detecao baseada em regras SQL
+6 regras: brute force, sql injection, port scanning,
+          path traversal, suspicious user agent, time-based anomaly
+
+Modos:
+  --mode historical   Analisa todo o historico (corre uma vez)
+  --mode realtime     Loop continuo com janela de 60 segundos (producao)
 
 Uso:
   python src/detection/rule_engine.py --mode historical
+  python src/detection/rule_engine.py --mode historical --days 30
   python src/detection/rule_engine.py --mode realtime
   python src/detection/rule_engine.py --mode realtime --interval 30
 """
@@ -22,10 +26,14 @@ load_dotenv()
 
 def get_rules(window):
     """
-    Retorna as 3 regras SQL com a janela de tempo fornecida.
+    Retorna as 6 regras SQL com a janela de tempo fornecida.
     window: string PostgreSQL interval, ex: '60 seconds' ou '7 days'
     """
     return [
+        # ------------------------------------------------------------------
+        # REGRA 1: Brute Force
+        # Deteta IPs com >= 5 login failures na janela
+        # ------------------------------------------------------------------
         (
             "Brute Force Detection",
             """
@@ -52,6 +60,10 @@ def get_rules(window):
             HAVING COUNT(*) >= 5;
             """.replace("{window}", window)
         ),
+        # ------------------------------------------------------------------
+        # REGRA 2: SQL Injection
+        # Deteta padroes de SQL injection em endpoints
+        # ------------------------------------------------------------------
         (
             "SQL Injection Detection",
             """
@@ -80,6 +92,10 @@ def get_rules(window):
             HAVING COUNT(*) >= 1;
             """.replace("{window}", window)
         ),
+        # ------------------------------------------------------------------
+        # REGRA 3: Port Scanning
+        # Deteta IPs que acedem >= 10 endpoints distintos na janela
+        # ------------------------------------------------------------------
         (
             "Port Scanning Detection",
             """
@@ -102,6 +118,115 @@ def get_rules(window):
             WHERE timestamp > NOW() - INTERVAL '{window}'
             GROUP BY ip
             HAVING COUNT(DISTINCT endpoint) >= 10;
+            """.replace("{window}", window)
+        ),
+        # ------------------------------------------------------------------
+        # REGRA 4: Path Traversal
+        # Deteta tentativas de aceder ficheiros do sistema via ../
+        # ------------------------------------------------------------------
+        (
+            "Path Traversal Detection",
+            """
+            INSERT INTO alerts (alert_type, severity, source, confidence,
+                                description, log_ids, ip, timestamp, metadata)
+            SELECT
+                'path_traversal', 'CRITICAL', 'rule', 1.0,
+                'Path traversal attempt from IP ' || ip || ' on ' || endpoint,
+                ARRAY_AGG(id ORDER BY timestamp),
+                ip,
+                MAX(timestamp),
+                jsonb_build_object(
+                    'endpoint',  endpoint,
+                    'method',    method,
+                    'attempts',  COUNT(*),
+                    'pattern',   CASE
+                        WHEN endpoint ILIKE '%../%'        THEN 'directory traversal'
+                        WHEN endpoint ILIKE '%/etc/passwd%' THEN 'passwd file access'
+                        WHEN endpoint ILIKE '%/etc/shadow%' THEN 'shadow file access'
+                        WHEN endpoint ILIKE '%/proc/%'      THEN 'proc filesystem access'
+                        ELSE 'other'
+                    END
+                )
+            FROM raw_logs
+            WHERE timestamp > NOW() - INTERVAL '{window}'
+              AND (
+                  endpoint ILIKE '%../%'
+               OR endpoint ILIKE '%/etc/passwd%'
+               OR endpoint ILIKE '%/etc/shadow%'
+               OR endpoint ILIKE '%/proc/%'
+               OR endpoint ILIKE '%/var/log/%'
+              )
+            GROUP BY ip, endpoint, method
+            HAVING COUNT(*) >= 1;
+            """.replace("{window}", window)
+        ),
+        # ------------------------------------------------------------------
+        # REGRA 5: Suspicious User Agent
+        # Deteta ferramentas de scanning/exploitation conhecidas
+        # ------------------------------------------------------------------
+        (
+            "Suspicious User Agent",
+            """
+            INSERT INTO alerts (alert_type, severity, source, confidence,
+                                description, log_ids, ip, timestamp, metadata)
+            SELECT
+                'suspicious_user_agent', 'MEDIUM', 'rule', 0.85,
+                'Suspicious tool detected from IP ' || ip,
+                ARRAY_AGG(id ORDER BY timestamp),
+                ip,
+                MAX(timestamp),
+                jsonb_build_object(
+                    'user_agent', data->>'user_agent',
+                    'requests',   COUNT(*),
+                    'endpoints',  ARRAY_AGG(DISTINCT endpoint)
+                )
+            FROM raw_logs
+            WHERE timestamp > NOW() - INTERVAL '{window}'
+              AND (
+                  data->>'user_agent' ILIKE '%sqlmap%'
+               OR data->>'user_agent' ILIKE '%nikto%'
+               OR data->>'user_agent' ILIKE '%nmap%'
+               OR data->>'user_agent' ILIKE '%masscan%'
+               OR data->>'user_agent' ILIKE '%zgrab%'
+               OR data->>'user_agent' ILIKE '%python-requests%'
+               OR data->>'user_agent' ILIKE '%go-http-client%'
+               OR data->>'user_agent' ILIKE '%curl%'
+              )
+            GROUP BY ip, data->>'user_agent'
+            HAVING COUNT(*) >= 3;
+            """.replace("{window}", window)
+        ),
+        # ------------------------------------------------------------------
+        # REGRA 6: Time-Based Anomaly
+        # Deteta acessos fora do horario de negocio (22h-6h)
+        # com volume elevado (>= 20 requests)
+        # ------------------------------------------------------------------
+        (
+            "Time-Based Anomaly",
+            """
+            INSERT INTO alerts (alert_type, severity, source, confidence,
+                                description, log_ids, ip, timestamp, metadata)
+            SELECT
+                'time_anomaly', 'LOW', 'rule', 0.7,
+                'Off-hours activity: ' || COUNT(*) || ' requests from IP ' || ip
+                    || ' between 22h-6h',
+                ARRAY_AGG(id ORDER BY timestamp),
+                ip,
+                MAX(timestamp),
+                jsonb_build_object(
+                    'requests',          COUNT(*),
+                    'unique_endpoints',  COUNT(DISTINCT endpoint),
+                    'hours_active',      ARRAY_AGG(DISTINCT EXTRACT(HOUR FROM timestamp)::int),
+                    'time_window',       '{window}'
+                )
+            FROM raw_logs
+            WHERE timestamp > NOW() - INTERVAL '{window}'
+              AND (
+                  EXTRACT(HOUR FROM timestamp) >= 22
+               OR EXTRACT(HOUR FROM timestamp) < 6
+              )
+            GROUP BY ip
+            HAVING COUNT(*) >= 20;
             """.replace("{window}", window)
         ),
     ]
@@ -181,7 +306,7 @@ if __name__ == "__main__":
         "--mode",
         choices=["historical", "realtime"],
         required=True,
-        help="historical: analisa todo o historico uma vez | realtime: loop continuo"
+        help="historical: analisa historico uma vez | realtime: loop continuo"
     )
     parser.add_argument(
         "--days",

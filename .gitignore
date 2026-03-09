@@ -17,3 +17,4 @@ logs/
 # Database backups
 *.sql.bak
 backup_*.sql
+.env

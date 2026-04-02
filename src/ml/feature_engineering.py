@@ -27,6 +27,8 @@ import warnings
 warnings.filterwarnings('ignore')
 load_dotenv()
 
+DEFAULT_LOOKBACK_DAYS = int(os.getenv('FEATURE_LOOKBACK_DAYS', '90'))
+
 
 class FeatureEngineer:
     """Pipeline completo de feature engineering para anomaly detection"""
@@ -59,7 +61,7 @@ class FeatureEngineer:
             print(f"✗ Erro ao conectar PostgreSQL: {e}")
             raise
     
-    def load_data(self, days=30):
+    def load_data(self, days=DEFAULT_LOOKBACK_DAYS):
         """
         Carrega logs dos últimos N dias
         
@@ -126,6 +128,7 @@ class FeatureEngineer:
         features = self._url_features(df, features)
         features = self._entropy_features(df, features)
         features = self._behavioral_features(df, features)
+        features = self._baseline_features(df, features)
         
         print(f"\n✓ Total de features extraídas: {len(features.columns)}")
         print(f"✓ Shape: {features.shape}")
@@ -260,6 +263,69 @@ class FeatureEngineer:
         print(f"   ✓ 2 features comportamentais")
         return features
     
+
+    def _baseline_features(self, df, features):
+        """Features orientadas a baseline de normalidade para novelty detection"""
+        print("8. Extraindo features de baseline comportamental...")
+
+        response_time = df['response_time_ms'].astype(float)
+        response_mean = response_time.mean()
+        response_std = response_time.std() or 1.0
+        features['response_time_log'] = np.log1p(response_time)
+        features['response_time_zscore_global'] = ((response_time - response_mean) / response_std).clip(-10, 10)
+
+        endpoint_stats = df.groupby('endpoint')['response_time_ms'].agg(['mean', 'std']).rename(columns={'mean': 'endpoint_rt_mean', 'std': 'endpoint_rt_std'})
+        df_enriched = df.join(endpoint_stats, on='endpoint')
+        endpoint_std = df_enriched['endpoint_rt_std'].replace(0, np.nan).fillna(response_std)
+        features['response_time_zscore_endpoint'] = ((response_time - df_enriched['endpoint_rt_mean'].fillna(response_mean)) / endpoint_std).clip(-10, 10)
+
+        ip_request_baseline = features.groupby(df['ip'])['requests_per_ip_5min'].transform('median').replace(0, 1)
+        features['requests_vs_ip_baseline_ratio'] = (features['requests_per_ip_5min'] / ip_request_baseline).clip(0, 50)
+
+        endpoint_frequency = df['endpoint'].value_counts(normalize=True)
+        method_endpoint_frequency = (df['method'].astype(str) + ':' + df['endpoint'].astype(str)).value_counts(normalize=True)
+        features['endpoint_rarity'] = 1.0 - df['endpoint'].map(endpoint_frequency).fillna(0.0)
+        features['method_endpoint_rarity'] = 1.0 - (df['method'].astype(str) + ':' + df['endpoint'].astype(str)).map(method_endpoint_frequency).fillna(0.0)
+
+        features['error_burst_score'] = (features['failed_requests_ratio_5min'] * features['requests_per_ip_5min']).clip(0, 1000)
+
+        endpoint_hour_baseline = df.groupby('endpoint')['timestamp'].transform(lambda s: pd.to_datetime(s).dt.hour.median())
+        features['hour_deviation_from_endpoint_pattern'] = (pd.to_datetime(df['timestamp']).dt.hour - endpoint_hour_baseline).abs().fillna(0).clip(0, 12)
+
+        print(f"   ? 7 features de baseline")
+        return features
+
+    def get_iforest_feature_columns(self, features):
+        """Conjunto dedicado de features para novelty detection."""
+        preferred = [
+            'status_code',
+            'response_time_ms',
+            'requests_per_ip_5min',
+            'unique_endpoints_5min',
+            'failed_requests_ratio_5min',
+            'avg_response_time_5min',
+            'max_response_time_5min',
+            'request_rate_5min',
+            'hour_of_day',
+            'day_of_week',
+            'is_night',
+            'endpoint_length',
+            'has_query_params',
+            'query_param_count',
+            'endpoint_entropy',
+            'time_since_last_request',
+            'requests_per_minute',
+            'response_time_log',
+            'response_time_zscore_global',
+            'response_time_zscore_endpoint',
+            'requests_vs_ip_baseline_ratio',
+            'endpoint_rarity',
+            'method_endpoint_rarity',
+            'error_burst_score',
+            'hour_deviation_from_endpoint_pattern',
+        ]
+        return [col for col in preferred if col in features.columns]
+
     def create_labels(self, df):
         """
         Cria labels baseados em alertas existentes
@@ -394,7 +460,7 @@ class FeatureEngineer:
         
         return features[selected_features], selected_features
     
-    def normalize_features(self, features):
+    def normalize_features(self, features, scaler_path='models/scaler.pkl', step_name='11'):
         """
         Normaliza features com StandardScaler
         
@@ -404,7 +470,7 @@ class FeatureEngineer:
         Returns:
             Tuple (features_normalizadas, scaler)
         """
-        print("\n11. Normalizando features...")
+        print(f"\n{step_name}. Normalizando features...")
         
         scaler = StandardScaler()
         features_scaled = pd.DataFrame(
@@ -414,7 +480,7 @@ class FeatureEngineer:
         )
         
         # Guardar scaler
-        with open('models/scaler.pkl', 'wb') as f:
+        with open(scaler_path, 'wb') as f:
             pickle.dump(scaler, f)
         
         print("   ✓ Features normalizadas (StandardScaler)")
@@ -422,7 +488,37 @@ class FeatureEngineer:
         
         return features_scaled, scaler
     
-    def save_artifacts(self, df_original, features_final, labels, selected_cols):
+    def build_protocol_metadata(self, df):
+        """Constroi metadados para o protocolo de novelty detection."""
+        scenario = df['data'].apply(
+            lambda payload: payload.get('scenario') if isinstance(payload, dict) else None
+        ).fillna('observed').astype(str)
+
+        known_attack_scenarios = {'brute_force', 'rate_abuse', 'offhours'}
+        unknown_attack_scenarios = {'scanning', 'sql_injection'}
+
+        protocol_role = pd.Series('observed', index=df.index, dtype='object')
+        protocol_role[scenario == 'normal'] = 'baseline_normal'
+        protocol_role[scenario.isin(known_attack_scenarios)] = 'known_attack'
+        protocol_role[scenario.isin(unknown_attack_scenarios)] = 'unknown_attack'
+
+        timestamps = pd.to_datetime(df['timestamp'])
+        protocol_split = pd.Series('observed', index=df.index, dtype='object')
+        normal_mask = scenario == 'normal'
+        normal_timestamps = timestamps[normal_mask]
+        if not normal_timestamps.empty:
+            train_cutoff = normal_timestamps.quantile(0.70)
+            validation_cutoff = normal_timestamps.quantile(0.85)
+            protocol_split[normal_mask & (timestamps <= train_cutoff)] = 'baseline_train'
+            protocol_split[normal_mask & (timestamps > train_cutoff) & (timestamps <= validation_cutoff)] = 'threshold_validation'
+            protocol_split[normal_mask & (timestamps > validation_cutoff)] = 'novelty_test'
+
+        protocol_split[scenario.isin(known_attack_scenarios)] = 'threshold_validation'
+        protocol_split[scenario.isin(unknown_attack_scenarios)] = 'novelty_test'
+
+        return scenario, protocol_role, protocol_split
+
+    def save_artifacts(self, df_original, features_final, labels, selected_cols, iforest_features_final, iforest_cols, lookback_days):
         """
         Guarda todos os artefactos
         
@@ -431,37 +527,68 @@ class FeatureEngineer:
             features_final: Features finais normalizadas
             labels: Labels
             selected_cols: Nomes das colunas selecionadas
+            iforest_features_final: Dataset dedicado ao Isolation Forest
+            iforest_cols: Nomes das colunas dedicadas ao Isolation Forest
+            lookback_days: Janela temporal usada para carregar logs
         """
         print("\n12. Salvando artefactos...")
         
+        scenario, protocol_role, protocol_split = self.build_protocol_metadata(df_original)
+
         # Dataset completo
         dataset = features_final.copy()
         dataset['label'] = labels.values
         dataset['log_id'] = df_original['id'].values
         dataset['timestamp'] = df_original['timestamp'].values
+        dataset['scenario'] = scenario.values
+        dataset['protocol_role'] = protocol_role.values
+        dataset['protocol_split'] = protocol_split.values
         
         # CSV
         dataset.to_csv('data/ml_dataset.csv', index=False)
-        print("   ✓ data/ml_dataset.csv")
+        print("   ? data/ml_dataset.csv")
         
-        # Pickle (mais rápido para ML)
+        # Pickle (mais r?pido para ML)
         dataset.to_pickle('data/ml_dataset.pkl')
-        print("   ✓ data/ml_dataset.pkl")
+        print("   ? data/ml_dataset.pkl")
+
+        iforest_dataset = iforest_features_final.copy()
+        iforest_dataset['label'] = labels.values
+        iforest_dataset['log_id'] = df_original['id'].values
+        iforest_dataset['timestamp'] = df_original['timestamp'].values
+        iforest_dataset['scenario'] = scenario.values
+        iforest_dataset['protocol_role'] = protocol_role.values
+        iforest_dataset['protocol_split'] = protocol_split.values
+        iforest_dataset.to_csv('data/ml_dataset_iforest.csv', index=False)
+        print("   ? data/ml_dataset_iforest.csv")
+        iforest_dataset.to_pickle('data/ml_dataset_iforest.pkl')
+        print("   ? data/ml_dataset_iforest.pkl")
         
         # Feature names
         with open('data/selected_features.txt', 'w') as f:
             f.write('\n'.join(selected_cols))
-        print("   ✓ data/selected_features.txt")
+        print("   ? data/selected_features.txt")
+
+        with open('data/iforest_features.txt', 'w') as f:
+            f.write('\n'.join(iforest_cols))
+        print("   ? data/iforest_features.txt")
         
         # Summary
         summary = {
             'timestamp': datetime.now().isoformat(),
             'total_logs': len(df_original),
-            'total_features_extracted': 19,
+            'total_features_extracted': int(features_final.shape[1] + max(len(iforest_cols) - len(selected_cols), 0)),
             'total_features_selected': len(selected_cols),
             'anomalies': int(labels.sum()),
             'anomaly_rate': f"{100*labels.mean():.2f}%",
-            'selected_features': selected_cols
+            'selected_features': selected_cols,
+            'iforest_features': iforest_cols,
+            'iforest_feature_count': len(iforest_cols),
+            'protocol_split_counts': protocol_split.value_counts().to_dict(),
+            'protocol_role_counts': protocol_role.value_counts().to_dict(),
+            'lookback_days': lookback_days,
+            'period_start': str(df_original['timestamp'].min()),
+            'period_end': str(df_original['timestamp'].max())
         }
         
         with open('data/feature_summary.json', 'w') as f:
@@ -470,97 +597,108 @@ class FeatureEngineer:
         
         print(f"\n   ✓ Dataset final shape: {dataset.shape}")
     
-    def run_pipeline(self, days=30, n_features_final=20):
+    def run_pipeline(self, days=DEFAULT_LOOKBACK_DAYS, n_features_final=20):
         """
         Pipeline completo end-to-end
         
         Args:
-            days: Dias para carregar (default: 7)
-            n_features_final: Número de features finais (default: 20)
+            days: Dias para carregar (default: FEATURE_LOOKBACK_DAYS)
+            n_features_final: N?mero de features finais (default: 20)
         
         Returns:
             Tuple (features_scaled, labels)
         """
-        print("="*70)
+        print("=" * 70)
         print("FEATURE ENGINEERING PIPELINE - PLANO A+")
         print("Semana 5 - Log Monitor MLOps")
-        print("="*70)
+        print("=" * 70)
         
         try:
-            # 1. Load data
             df = self.load_data(days)
-            
-            # 2. Extract all features
-            features, df_with_windows = self.extract_features(df)
-            
-            # 3. Create labels
+            features, _ = self.extract_features(df)
             labels = self.create_labels(df)
-            
-            # 4. Remove correlação
             features = self.remove_correlated_features(features)
-            
-            # 5. RFE - selecionar top features
+
+            iforest_cols = self.get_iforest_feature_columns(features)
+            iforest_features = features[iforest_cols].copy()
+            print(f"\n10.1 Features dedicadas ao Isolation Forest ({len(iforest_cols)}): {iforest_cols}")
+
             features_selected, selected_cols = self.select_best_features(
                 features, labels, n_features=n_features_final
             )
-            
-            # 6. Normalize
-            features_final, scaler = self.normalize_features(features_selected)
-            
-            # 7. Save
-            self.save_artifacts(df, features_final, labels, selected_cols)
-            
-            print("\n" + "="*70)
-            print("✓ PIPELINE COMPLETO COM SUCESSO!")
-            print("="*70)
-            print(f"\nArtefactos criados:")
-            print("  • data/ml_dataset.pkl (dataset final)")
-            print("  • data/ml_dataset.csv (versão CSV)")
-            print("  • models/scaler.pkl (StandardScaler)")
-            print("  • models/feature_selector.pkl (RFE)")
-            print("  • data/selected_features.txt (lista de features)")
-            print("  • data/feature_summary.json (metadados)")
-            
-            print(f"\nPróximo passo:")
-            print("  → Semana 6: Model Training (Isolation Forest)")
-            
+
+            features_final, scaler = self.normalize_features(
+                features_selected,
+                scaler_path='models/scaler.pkl',
+                step_name='11',
+            )
+            iforest_features_final, iforest_scaler = self.normalize_features(
+                iforest_features,
+                scaler_path='models/iforest_scaler.pkl',
+                step_name='11.1',
+            )
+
+            self.save_artifacts(
+                df,
+                features_final,
+                labels,
+                selected_cols,
+                iforest_features_final,
+                iforest_cols,
+                lookback_days=days,
+            )
+
+            print("\n" + "=" * 70)
+            print("? PIPELINE COMPLETO COM SUCESSO!")
+            print("=" * 70)
+            print("\nArtefactos criados:")
+            print("  ? data/ml_dataset.pkl (dataset supervisionado)")
+            print("  ? data/ml_dataset_iforest.pkl (dataset novelty detection)")
+            print("  ? data/ml_dataset.csv (vers?o CSV supervisionada)")
+            print("  ? data/ml_dataset_iforest.csv (vers?o CSV IF)")
+            print("  ? models/scaler.pkl (StandardScaler supervisionado)")
+            print("  ? models/iforest_scaler.pkl (StandardScaler IF)")
+            print("  ? models/feature_selector.pkl (RFE supervisionado)")
+            print("  ? data/selected_features.txt (lista supervisionada)")
+            print("  ? data/iforest_features.txt (lista novelty detection)")
+            print("  ? data/feature_summary.json (metadados)")
+            print("\nPr?ximo passo:")
+            print("  ? Treinar novamente o Isolation Forest com dataset dedicado")
             return features_final, labels
-            
+
         except Exception as e:
-            print(f"\n✗ ERRO NO PIPELINE: {e}")
+            print(f"\n? ERRO NO PIPELINE: {e}")
             raise
-        
+
         finally:
             if self.conn:
                 self.conn.close()
-                print("\n✓ Conexão PostgreSQL fechada")
+                print("\n? Conex?o PostgreSQL fechada")
 
 
 def main():
-    """Função principal"""
+    """Fun??o principal"""
     try:
         fe = FeatureEngineer()
-        features, labels = fe.run_pipeline(days=30, n_features_final=20)
-        
-        print(f"\n{'='*70}")
+        features, labels = fe.run_pipeline(days=DEFAULT_LOOKBACK_DAYS, n_features_final=20)
+
+        print(f"\n{'=' * 70}")
         print("RESUMO FINAL")
-        print(f"{'='*70}")
-        print(f"Shape final: {features.shape}")
-        print(f"Features: {list(features.columns)[:5]}... (+{len(features.columns)-5} more)")
-        print(f"Anomaly rate: {100*labels.mean():.2f}%")
-        print(f"\n✓ Tudo pronto para Semana 6! 🚀")
-        
+        print(f"{'=' * 70}")
+        print(f"Total de samples: {len(features):,}")
+        print(f"Anomalias: {labels.sum():,} ({100 * labels.mean():.2f}%)")
+        print(f"Normais: {(labels == 0).sum():,} ({100 * (labels == 0).mean():.2f}%)")
+        return features, labels
+
     except Exception as e:
-        print(f"\n✗ Falha: {e}")
+        print(f"\n? Falha: {e}")
         print("\nTroubleshooting:")
-        print("1. PostgreSQL está a correr? docker compose ps")
+        print("1. PostgreSQL est? a correr? docker compose ps")
         print("2. Tens logs? SELECT COUNT(*) FROM raw_logs;")
         print("3. Tens alertas? SELECT COUNT(*) FROM alerts;")
-        print("4. Dependências instaladas? pip install -r requirements.txt")
-        return 1
-    
-    return 0
+        print("4. Depend?ncias instaladas? pip install -r requirements.txt")
+        raise
 
 
-if __name__ == "__main__":
-    exit(main())
+if __name__ == '__main__':
+    main()

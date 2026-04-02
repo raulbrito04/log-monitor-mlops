@@ -18,3 +18,15 @@ logs/
 *.sql.bak
 backup_*.sql
 .env
+
+# ML artefacts
+mlruns/
+experiments/
+models/*.pkl
+models/*.json
+
+# Windows metadata
+*.Zone.Identifier
+
+# Temp/test files
+test.txt

@@ -1,0 +1,22 @@
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+FROM python:3.12-slim AS runtime
+
+WORKDIR /app
+
+COPY --from=builder /install /usr/local
+COPY src/detection/ ./src/detection/
+COPY src/__init__.py ./src/__init__.py
+COPY .env.example ./.env
+
+ENV PYTHONUNBUFFERED=1
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD python -c "import os, psycopg2; psycopg2.connect(host=os.getenv('POSTGRES_HOST', 'localhost'), port=int(os.getenv('POSTGRES_PORT', '5432')), database=os.getenv('POSTGRES_DB', 'logmonitor'), user=os.getenv('POSTGRES_USER', 'postgres'), password=os.getenv('POSTGRES_PASSWORD', 'changeme')).close(); print('ok')"
+
+CMD ["python", "src/detection/rule_engine.py", "--mode", "realtime", "--interval", "60"]

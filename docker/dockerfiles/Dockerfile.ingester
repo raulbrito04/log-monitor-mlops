@@ -1,0 +1,23 @@
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+FROM python:3.12-slim AS runtime
+
+WORKDIR /app
+
+COPY --from=builder /install /usr/local
+COPY src/log_processor/ ./src/log_processor/
+COPY src/__init__.py ./src/__init__.py
+COPY .env.example ./.env
+
+ENV PYTHONUNBUFFERED=1
+ENV LOG_FILE=/app/logs/app.log
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "from pathlib import Path; assert Path('/app/logs/app.log').exists(); print('ok')"
+
+CMD ["python", "src/log_processor/ingester.py", "/app/logs/app.log", "--batch-size", "100"]

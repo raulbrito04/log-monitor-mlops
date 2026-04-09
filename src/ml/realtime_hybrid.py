@@ -64,7 +64,7 @@ class RealtimeHybridProcessor:
             return
 
         # Extrair features com o FeatureEngineer da Semana 5
-        features_df = self.feat_eng.extract_features(raw_df)
+        features_df, _ = self.feat_eng.extract_features(raw_df)
         features_df["log_id"] = raw_df["id"].values
 
         # Avaliar cada log
@@ -111,3 +111,4 @@ class RealtimeHybridProcessor:
 if __name__ == "__main__":
     processor = RealtimeHybridProcessor(poll_interval_sec=30)
     processor.run()
+

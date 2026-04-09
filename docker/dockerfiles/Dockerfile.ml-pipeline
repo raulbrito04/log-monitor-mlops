@@ -1,0 +1,29 @@
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+FROM python:3.12-slim AS runtime
+
+WORKDIR /app
+
+COPY --from=builder /install /usr/local
+COPY src/ml/ ./src/ml/
+COPY models/ ./models/
+COPY data/ ./data/
+COPY .env.example ./.env
+
+ENV PYTHONUNBUFFERED=1
+ENV MPLBACKEND=Agg
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD python -c "from pathlib import Path; assert Path('models/isolation_forest_latest.pkl').exists(); assert Path('data/selected_features.txt').exists(); print('ok')"
+
+CMD ["python", "src/ml/realtime_hybrid.py"]

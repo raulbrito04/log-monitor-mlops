@@ -1,0 +1,28 @@
+﻿FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+FROM python:3.12-slim AS runtime
+
+WORKDIR /app
+
+COPY --from=builder /install /usr/local
+COPY src/flask_app/ ./src/flask_app/
+COPY src/monitoring/ ./src/monitoring/
+COPY src/__init__.py ./src/__init__.py
+COPY .env.example ./.env
+
+ENV PYTHONUNBUFFERED=1
+ENV FLASK_ENV=production
+ENV LOG_FILE=/app/logs/app.log
+ENV PYTHONPATH=/app
+
+EXPOSE 5001
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:5001/health', timeout=5).raise_for_status()"
+
+CMD ["python", "-m", "src.flask_app.app"]

@@ -29,7 +29,9 @@ from functools import wraps
 from typing import Any
 
 from flask import Flask, Response, g, jsonify, request
+from prometheus_flask_exporter import PrometheusMetrics
 from pythonjsonlogger import jsonlogger
+from src.monitoring.metrics import persist_runtime_metrics, refresh_monitoring_metrics
 
 # ─── CONSTANTES ─────────────────────────────────────────────────────────────
 
@@ -199,6 +201,13 @@ def create_app() -> Flask:
     app.config["JSON_SORT_KEYS"] = False
 
     logger = setup_logging()
+    metrics = PrometheusMetrics(app, path="/metrics")
+    metrics.info(
+        "logmonitor_build_info",
+        "Build metadata for the Flask service",
+        version=APP_VERSION,
+        environment=os.getenv("LOGMONITOR_ENV", "development"),
+    )
 
     # ── MIDDLEWARE: LOGGING DE TODOS OS REQUESTS ─────────────────────────────
     # Usar before_request e after_request para centralizar logging
@@ -214,6 +223,9 @@ def create_app() -> Flask:
         """
         g.start_time = time.perf_counter()
         g.request_id = str(uuid.uuid4())
+
+        if request.path == "/metrics":
+            refresh_monitoring_metrics()
 
         # Capturar body de forma segura (pode ser JSON ou form data)
         body: dict[str, Any] = {}
@@ -278,6 +290,31 @@ def create_app() -> Flask:
             JSON com status e versão da aplicação.
         """
         return jsonify({"status": "healthy", "version": APP_VERSION}), 200
+
+    @app.route("/metrics/ml_quality", methods=["POST"])
+    def update_ml_quality() -> tuple[Response, int]:
+        """Atualiza a metrica operacional de F1 usada no monitoring."""
+        payload = request.get_json(silent=True) or {}
+        ml_f1_score = payload.get("ml_f1_score")
+
+        if ml_f1_score is None:
+            return jsonify({"error": "ml_f1_score is required"}), 400
+
+        try:
+            ml_f1_score = float(ml_f1_score)
+        except (TypeError, ValueError):
+            return jsonify({"error": "ml_f1_score must be numeric"}), 400
+
+        saved = persist_runtime_metrics(
+            {
+                "ml_f1_score": ml_f1_score,
+                "model": payload.get("model", "hybrid_ensemble"),
+                "dataset": payload.get("dataset", "holdout"),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        refresh_monitoring_metrics(force=True)
+        return jsonify({"status": "updated", "runtime_metrics": saved}), 200
 
     @app.route("/login", methods=["POST"])
     def login() -> tuple[Response, int]:
@@ -541,3 +578,5 @@ if __name__ == "__main__":
         port=port,
         debug=debug,
     )
+
+

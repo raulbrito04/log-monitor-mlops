@@ -1,0 +1,72 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 0,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Logs Processed",
+      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "sum(logmonitor_logs_processed_total)", "refId": "A"}],
+      "options": {"reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""}, "orientation": "auto", "textMode": "value"}
+    },
+    {
+      "type": "stat",
+      "title": "Alerts (24h)",
+      "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "sum(increase(logmonitor_alerts_total[24h]))", "refId": "A"}],
+      "options": {"reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""}, "orientation": "auto", "textMode": "value"}
+    },
+    {
+      "type": "stat",
+      "title": "Data Freshness",
+      "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "logmonitor_data_freshness_seconds", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "options": {"reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""}, "orientation": "auto", "textMode": "value"}
+    },
+    {
+      "type": "stat",
+      "title": "HTTP Availability",
+      "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "avg_over_time(up{job=\"flask_app\"}[1h])", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}},
+      "options": {"reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""}, "orientation": "auto", "textMode": "value"}
+    },
+    {
+      "type": "timeseries",
+      "title": "Request Rate",
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "targets": [{"expr": "sum(rate(flask_http_request_total[5m])) by (method, status)", "legendFormat": "{{method}} {{status}}", "refId": "A"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 Request Latency",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "targets": [{"expr": "histogram_quantile(0.95, sum by (le) (rate(flask_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p95 latency", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Alerts by Severity",
+      "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+      "targets": [{"expr": "sum(logmonitor_active_alerts) by (severity)", "legendFormat": "{{severity}}", "refId": "A"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "DB Query Duration p95",
+      "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+      "targets": [{"expr": "histogram_quantile(0.95, sum by (le, query_type) (rate(logmonitor_db_query_duration_seconds_bucket[5m])))", "legendFormat": "{{query_type}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["logmonitor", "overview"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timezone": "browser",
+  "title": "Log Monitor - System Overview",
+  "version": 1
+}

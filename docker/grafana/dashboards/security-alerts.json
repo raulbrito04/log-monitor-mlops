@@ -1,0 +1,58 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 0,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Critical Alerts (24h)",
+      "gridPos": {"x": 0, "y": 0, "w": 8, "h": 4},
+      "targets": [{"expr": "sum(logmonitor_active_alerts{severity=\"CRITICAL\"})", "refId": "A"}],
+      "options": {"reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""}, "orientation": "auto", "textMode": "value"}
+    },
+    {
+      "type": "stat",
+      "title": "High Alerts (24h)",
+      "gridPos": {"x": 8, "y": 0, "w": 8, "h": 4},
+      "targets": [{"expr": "sum(logmonitor_active_alerts{severity=\"HIGH\"})", "refId": "A"}],
+      "options": {"reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""}, "orientation": "auto", "textMode": "value"}
+    },
+    {
+      "type": "stat",
+      "title": "Warning Alerts (24h)",
+      "gridPos": {"x": 16, "y": 0, "w": 8, "h": 4},
+      "targets": [{"expr": "sum(logmonitor_active_alerts{severity=\"MEDIUM\"})", "refId": "A"}],
+      "options": {"reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""}, "orientation": "auto", "textMode": "value"}
+    },
+    {
+      "type": "timeseries",
+      "title": "Alerts by Type",
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "targets": [{"expr": "sum(increase(logmonitor_alerts_total[1h])) by (alert_type)", "legendFormat": "{{alert_type}}", "refId": "A"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Alerts by Severity",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "targets": [{"expr": "sum(increase(logmonitor_alerts_total[1h])) by (severity)", "legendFormat": "{{severity}}", "refId": "A"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "4xx / 5xx Rate",
+      "gridPos": {"x": 0, "y": 12, "w": 24, "h": 8},
+      "targets": [
+        {"expr": "sum(rate(flask_http_request_total{status=~\"4..\"}[5m]))", "legendFormat": "4xx", "refId": "A"},
+        {"expr": "sum(rate(flask_http_request_total{status=~\"5..\"}[5m]))", "legendFormat": "5xx", "refId": "B"}
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["logmonitor", "security"],
+  "templating": {"list": []},
+  "time": {"from": "now-24h", "to": "now"},
+  "timezone": "browser",
+  "title": "Log Monitor - Security Alerts",
+  "version": 1
+}

@@ -1,4 +1,4 @@
-version: "3.8"
+﻿version: "3.8"
 
 services:
   postgres:
@@ -74,7 +74,32 @@ services:
       - backend
       - frontend
     restart: unless-stopped
-
+  dashboard:
+    build:
+      context: ..
+      dockerfile: docker/dockerfiles/Dockerfile.dashboard
+    container_name: logmonitor-dashboard
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-logmonitor}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-http://prometheus:9090}
+      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:-admin}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-admin}
+      DASHBOARD_REFRESH_SECONDS: ${DASHBOARD_REFRESH_SECONDS:-30}
+    ports:
+      - "8501:8501"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+    networks:
+      - backend
+      - monitoring
+    restart: unless-stopped
   ingester:
     build:
       context: ..
@@ -225,4 +250,5 @@ volumes:
     driver: local
   alertmanager_data:
     driver: local
+
 

@@ -1,0 +1,27 @@
+[MASTER]
+ignore=__pycache__,migrations,alembic
+ignore-paths=.*venv/.*,.*\.venv/.*,src/ml/train_model\.py,src/ml/feature_engineering\.py,src/ml/realtime_hybrid\.py,src/flask_app/traffic_generator\.py,src/dashboard/Home\.py,src/dashboard/pages/.*
+
+[MESSAGES CONTROL]
+disable=
+    C0114,
+    C0115,
+    C0116,
+    R0903,
+    W0212,
+    W0611,
+    R0801
+
+[FORMAT]
+max-line-length=100
+
+[DESIGN]
+max-args=8
+max-locals=20
+max-returns=6
+
+[SIMILARITIES]
+min-similarity-lines=10
+
+[SCORE]
+fail-under=7.0

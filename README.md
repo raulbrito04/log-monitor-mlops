@@ -1,12 +1,19 @@
 # 🔍 Log Monitor MLOps
 
+[![CI Pipeline](https://github.com/RaulBrito04/log-monitor-mlops/actions/workflows/ci.yml/badge.svg)](https://github.com/RaulBrito04/log-monitor-mlops/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-71%25-yellow)](https://github.com/RaulBrito04/log-monitor-mlops/actions)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
+[![Docker](https://img.shields.io/badge/docker-compose-2496ED.svg?logo=docker)](docker/docker-compose.yml)
+[![Security: Bandit](https://img.shields.io/badge/security-bandit-yellow.svg)](https://github.com/PyCQA/bandit)
 Sistema híbrido de deteção de anomalias em logs web usando **regras determinísticas** + **machine learning**.
+
+> Estado atual: monitoring stack, dashboard Streamlit, testes automatizados e pipeline de CI/CD preparados até à Semana 13.
 
 ---
 
 ## 📊 Status do Projeto
 
-**Progresso:** 40% completo (Semana 6/16)  
+**Progresso:** 81% completo (Semana 13/16)  
 **Apresentação Intercalar:** 11-15 Maio 2025  
 **Objetivo Intercalar:** Plano A completo
 

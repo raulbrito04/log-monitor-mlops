@@ -1,0 +1,54 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+USERNAME_PATTERN = r"^[A-Za-z0-9_.@-]+$"
+
+
+class LoginPayload(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    username: str = Field(min_length=1, max_length=64, pattern=USERNAME_PATTERN)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class SearchQuery(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    q: str = Field(min_length=1, max_length=128)
+
+
+class PaginationQuery(BaseModel):
+    page: int = Field(default=1, ge=1)
+    per_page: int = Field(default=10, ge=1, le=20)
+
+
+class UploadMetadata(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+
+
+def validate_model(model_cls: type[BaseModel], payload: dict[str, Any]) -> BaseModel:
+    return model_cls.model_validate(payload)
+
+
+def first_validation_error(exc: ValidationError) -> str:
+    error = exc.errors()[0]
+    location = ".".join(str(part) for part in error.get("loc", ()))
+    return f"{location}: {error.get('msg', 'invalid input')}" if location else error.get("msg", "invalid input")
+
+
+def validate_upload_filename(filename: str, allowed_extensions: set[str] | None = None) -> str:
+    allowed_extensions = allowed_extensions or {"json", "log", "csv"}
+    metadata = UploadMetadata.model_validate({"filename": filename})
+    suffix = Path(metadata.filename).suffix.lower().lstrip(".")
+    if not suffix or suffix not in allowed_extensions:
+        raise ValueError("Extensao de ficheiro nao permitida")
+    return metadata.filename
+
+
+def upload_size_limit_bytes() -> int:
+    return int(os.getenv("MAX_UPLOAD_MB", "5")) * 1024 * 1024

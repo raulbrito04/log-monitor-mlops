@@ -4,7 +4,6 @@ Tests for the Flask application.
 
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,9 +13,22 @@ from src.flask_app.app import create_app
 
 @pytest.fixture
 def app():
-    with patch("src.flask_app.app.PrometheusMetrics") as metrics_cls:
-        metrics_cls.return_value.info = MagicMock()
-        app = create_app()
+    env = {
+        "LOGMONITOR_ENV": "test",
+        "FLASK_SECRET_KEY": "a" * 32,
+        "DEMO_ADMIN_USER": "admin",
+        "DEMO_ADMIN_PASS": "admin123",
+        "DEMO_USER1_USER": "user1",
+        "DEMO_USER1_PASS": "password1",
+        "DEMO_USER2_USER": "user2",
+        "DEMO_USER2_PASS": "password2",
+        "DEMO_ANALYST_USER": "analyst",
+        "DEMO_ANALYST_PASS": "analyst99",
+    }
+    with patch.dict("os.environ", env, clear=False):
+        with patch("src.flask_app.app.PrometheusMetrics") as metrics_cls:
+            metrics_cls.return_value.info = MagicMock()
+            app = create_app()
     app.config.update({"TESTING": True, "LOG_FILE": "/tmp/test_app.log"})
     yield app
 
@@ -123,8 +135,7 @@ class TestApiData:
 
     def test_per_page_capped_at_20(self, client):
         response = client.get("/api/data?per_page=100")
-        data = response.get_json()
-        assert data["per_page"] <= 20
+        assert response.status_code == 400
 
     def test_returns_total_count(self, client):
         response = client.get("/api/data")
@@ -200,6 +211,12 @@ class TestSearch:
         for payload in sqli_payloads:
             response = client.get(f"/search?q={payload}")
             assert response.status_code in (200, 400), f"App crashed with payload: {payload!r}"
+
+
+class TestUpload:
+    def test_upload_returns_200_without_file(self, client):
+        response = client.post("/api/upload", data=b"sample")
+        assert response.status_code == 200
 
 
 class TestErrorHandlers:

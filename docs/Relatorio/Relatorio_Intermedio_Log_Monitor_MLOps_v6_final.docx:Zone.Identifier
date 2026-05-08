@@ -1,0 +1,4 @@
+[ZoneTransfer]
+ZoneId=3
+ReferrerUrl=https://claude.ai/chat/7b753d31-9f8b-467a-85d0-bf0dba72981d
+HostUrl=https://claude.ai/api/organizations/d0c86bc9-fce8-46d4-a95b-044584213322/conversations/7b753d31-9f8b-467a-85d0-bf0dba72981d/wiggle/download-file?path=%2Fmnt%2Fuser-data%2Foutputs%2FRelatorio_Intermedio_Log_Monitor_MLOps_v6_final.docx

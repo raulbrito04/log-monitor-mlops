@@ -1,0 +1,4 @@
+[ZoneTransfer]
+ZoneId=3
+ReferrerUrl=https://claude.ai/chat/0c1a8669-b444-498a-90fb-f11ae41a1294
+HostUrl=https://claude.ai/api/organizations/cbfd2f8e-aa8a-4c1a-8d67-5d5a40b097ee/conversations/0c1a8669-b444-498a-90fb-f11ae41a1294/wiggle/download-file?path=%2Fmnt%2Fuser-data%2Foutputs%2FRelatorio_Intermedio_Log_Monitor_MLOps_v2.docx

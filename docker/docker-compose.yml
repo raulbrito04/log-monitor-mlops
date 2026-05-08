@@ -1,6 +1,4 @@
-﻿version: "3.8"
-
-services:
+﻿services:
   postgres:
     image: timescale/timescaledb:latest-pg16
     container_name: logmonitor-postgres
@@ -28,13 +26,13 @@ services:
   mlflow:
     image: python:3.12-slim
     container_name: logmonitor-mlflow
+    environment:
+      _MLFLOW_SERVER_FILE_STORE: "sqlite:////mlruns/mlflow.db"
+      _MLFLOW_SERVER_ARTIFACT_ROOT: "/mlruns"
+      MLFLOW_TRACKING_URI: "sqlite:////mlruns/mlflow.db"
     command: >
       sh -c "pip install --no-cache-dir mlflow==2.22.2 &&
-             mlflow server
-             --backend-store-uri sqlite:///mlruns/mlflow.db
-             --default-artifact-root /mlruns
-             --host 0.0.0.0
-             --port 5000"
+             gunicorn --bind 0.0.0.0:5000 --workers 2 --timeout 120 mlflow.server:app"
     ports:
       - "5000:5000"
     volumes:
@@ -56,6 +54,9 @@ services:
       dockerfile: docker/dockerfiles/Dockerfile.flask
     container_name: logmonitor-flask
     environment:
+      LOGMONITOR_ENV: ${LOGMONITOR_ENV:-development}
+      FLASK_SECRET_KEY: ${FLASK_SECRET_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      FLASK_HOST: ${FLASK_HOST:-0.0.0.0}
       FLASK_PORT: ${FLASK_PORT:-5001}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
@@ -63,10 +64,30 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
       LOG_FILE: /app/logs/app.log
+      DEMO_ADMIN_USER: ${DEMO_ADMIN_USER:-admin}
+      DEMO_ADMIN_PASS: ${DEMO_ADMIN_PASS:-admin123}
+      DEMO_USER1_USER: ${DEMO_USER1_USER:-user1}
+      DEMO_USER1_PASS: ${DEMO_USER1_PASS:-password1}
+      DEMO_USER2_USER: ${DEMO_USER2_USER:-user2}
+      DEMO_USER2_PASS: ${DEMO_USER2_PASS:-password2}
+      DEMO_ANALYST_USER: ${DEMO_ANALYST_USER:-analyst}
+      DEMO_ANALYST_PASS: ${DEMO_ANALYST_PASS:-analyst99}
+      RATELIMIT_DEFAULT: ${RATELIMIT_DEFAULT:-200 per hour}
+      RATELIMIT_LOGIN: ${RATELIMIT_LOGIN:-5 per minute}
+      RATELIMIT_ADMIN: ${RATELIMIT_ADMIN:-20 per minute}
+      RATELIMIT_SEARCH: ${RATELIMIT_SEARCH:-30 per minute}
+      RATELIMIT_UPLOAD: ${RATELIMIT_UPLOAD:-10 per minute}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-5}
     ports:
       - "5001:5001"
     volumes:
       - logs_data:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5001/health', timeout=5).raise_for_status()"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,6 +95,7 @@ services:
       - backend
       - frontend
     restart: unless-stopped
+
   dashboard:
     build:
       context: ..
@@ -100,6 +122,7 @@ services:
       - backend
       - monitoring
     restart: unless-stopped
+
   ingester:
     build:
       context: ..
@@ -169,6 +192,7 @@ services:
     networks:
       - backend
     restart: unless-stopped
+
   prometheus:
     image: prom/prometheus:v2.51.0
     container_name: logmonitor-prometheus
@@ -250,5 +274,3 @@ volumes:
     driver: local
   alertmanager_data:
     driver: local
-
-

@@ -625,13 +625,63 @@ GET  /api/v1/incidents            → incidentes por estado
 
 ### Alerting avançado (Goal D)
 
-O alerting existente (S14) cobre eventos básicos: rate limit hits, blocked auth, data freshness.
+O Alertmanager já está a correr como microserviço. O que distingue o alerting atual do alerting avançado é o **tipo de evento** que dispara o alerta.
 
-O **alerting avançado** do Goal D fecha o ciclo operacional com alertas de negócio e de modelo:
+**O que já está integrado (S14 — operacional):**
 
-- **Degradação de modelo:** o Alertmanager dispara um alerta se o F1 do modelo retrained for inferior ao modelo em produção (S18)
-- **Incidentes não tratados:** alerta se existirem muitos incidentes em estado `NEW` sem transição para `INVESTIGATING` (S21–S22)
-- **Benchmark de qualidade:** comparação automática de métricas entre dataset sintético e CICIDS-2017 (S19)
+| Alerta | Trigger | Visível em |
+|---|---|---|
+| `DataFreshnessHigh` | Dados no PostgreSQL mais velhos que o SLO (5 min) | Alertmanager + slide 12 da apresentação |
+| `HighLatency` | Latência p95 acima de 200 ms | Alertmanager |
+| `ServiceDown` | Healthcheck de um container falha | Alertmanager |
+| Rate limit hits | IP excede limite numa rota sensível | Logs estruturados + contador Prometheus |
+| Blocked auth | Tentativa de login bloqueada | Logs estruturados |
+
+Estes alertas são todos **de infraestrutura e operações** — dizem que o sistema está em mau estado, não que o negócio (a deteção) está a degradar.
+
+---
+
+**O que o Goal D vai integrar (ainda não existe):**
+
+| Alerta | Trigger | Sprint |
+|---|---|---|
+| `ModelDegradation` | F1 do modelo retrained inferior ao modelo em produção | S18 |
+| `IncidentBacklog` | Muitos incidentes em estado `NEW` sem transição para `INVESTIGATING` | S21–S22 |
+| `BenchmarkDrift` | Diferença significativa entre métricas no dataset sintético e no CICIDS-2017 | S19 |
+
+Estes alertas são de **negócio e de modelo** — dizem que a qualidade da deteção está a degradar, não que o servidor caiu. É a diferença entre "o sistema está ligado" e "o sistema está a funcionar bem".
+
+---
+
+### CICIDS-2017
+
+**CICIDS-2017** (Canadian Institute for Cybersecurity Intrusion Detection dataset, 2017) é o dataset de referência da literatura académica para avaliação de sistemas de deteção de intrusões. Foi publicado por Sharafaldin, Lashkari e Ghorbani (2018) e é o benchmark mais citado na área.
+
+**O que contém:** tráfego de rede real capturado durante 5 dias num ambiente controlado, com ataques reais executados contra uma infraestrutura de teste. Inclui:
+
+| Tipo de ataque | Exemplos |
+|---|---|
+| DoS / DDoS | Slowloris, GoldenEye, Hulk, LOIC UDP |
+| Brute Force | FTP-Patator, SSH-Patator |
+| Web Attacks | SQL Injection, XSS, Command Injection |
+| Infiltration | Backdoor, reverse shell |
+| Botnet | ARES botnet |
+| PortScan | nmap com vários modos |
+| Tráfego normal | HTTP, HTTPS, FTP, SSH, email |
+
+**Porquê é importante para o projeto:**
+
+Até à S19, o modelo foi avaliado exclusivamente em dados sintéticos gerados pelo próprio `traffic_generator.py` do projeto. Dados sintéticos têm uma limitação crítica: foram gerados com as mesmas regras que inspiraram o modelo, o que pode inflar artificialmente as métricas (F1=0,838 pode ser mais fácil de atingir em dados que o próprio sistema ajudou a definir).
+
+O CICIDS-2017 é **tráfego real** de ataques reais — um modelo que generaliza bem para este dataset demonstra que aprendeu padrões genuínos, não artefactos do dataset sintético.
+
+**O que o Goal D (S19) vai medir:**
+- correr o Isolation Forest e o ensemble no CICIDS-2017 sem retreinar
+- comparar F1 e ROC-AUC: dados sintéticos vs CICIDS-2017
+- se a diferença for grande, indica overfitting ao dataset sintético
+- se a diferença for pequena, valida que o modelo generaliza
+
+**Limitação conhecida:** o CICIDS-2017 é tráfego de rede (pcap + flows), não logs HTTP estruturados como os do projeto. Será necessária adaptação do feature engineering para alinhar os formatos — isso faz parte do trabalho da S19.
 
 ---
 

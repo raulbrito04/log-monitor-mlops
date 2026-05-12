@@ -54,7 +54,7 @@ def get_rules(window):
                 )
             FROM raw_logs
             WHERE endpoint = '/login'
-              AND status = 401
+              AND status IN (401, 429)
               AND timestamp > NOW() - INTERVAL '{window}'
             GROUP BY ip
             HAVING COUNT(*) >= 5;

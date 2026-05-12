@@ -1,0 +1,12 @@
+exclude_dirs:
+  - tests/
+  - venv/
+  - .venv/
+
+skips:
+  - B101
+  - B311
+  - B608
+
+level: MEDIUM
+confidence: MEDIUM

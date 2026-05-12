@@ -1,4 +1,4 @@
-"""
+﻿"""
 Log ingestion pipeline: reads JSON logs and inserts into PostgreSQL.
 
 Usage:
@@ -18,7 +18,6 @@ import psycopg2
 from psycopg2.extras import execute_values
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 
 DB_CONFIG = {
@@ -34,12 +33,11 @@ def get_db_connection(max_retries: int = 5):
     """Create database connection with retry logic."""
     for attempt in range(max_retries):
         try:
-            conn = psycopg2.connect(**DB_CONFIG)
-            return conn
-        except psycopg2.OperationalError as e:
+            return psycopg2.connect(**DB_CONFIG)
+        except psycopg2.OperationalError:
             if attempt < max_retries - 1:
-                wait = 2 ** attempt  # Exponential backoff
-                print(f"Connection failed (attempt {attempt+1}/{max_retries})")
+                wait = 2 ** attempt
+                print(f"Connection failed (attempt {attempt + 1}/{max_retries})")
                 print(f"Retrying in {wait}s...")
                 time.sleep(wait)
             else:
@@ -50,8 +48,7 @@ def get_db_connection(max_retries: int = 5):
 def parse_log_line(line: str) -> Optional[dict]:
     """Parse JSON log line into dict."""
     try:
-        log = json.loads(line.strip())
-        return log
+        return json.loads(line.strip())
     except json.JSONDecodeError as e:
         print(f"WARNING: Failed to parse line: {line[:100]}... ({e})")
         return None
@@ -61,18 +58,20 @@ def prepare_log_for_insert(log: dict) -> tuple:
     """Extract fields from log dict for INSERT."""
     timestamp = log.get("timestamp")
 
-    # Handle timestamp formats
+    if timestamp is None:
+        timestamp = datetime.now()
+
     if isinstance(timestamp, str):
-        # Try ISO format first
         try:
             timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         except ValueError:
-            # Fallback to parsing common formats
             try:
                 timestamp = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S")
             except ValueError:
                 print(f"WARNING: Invalid timestamp format: {timestamp}")
                 timestamp = datetime.now()
+    elif not isinstance(timestamp, datetime):
+        timestamp = datetime.now()
 
     return (
         log.get("log_type", "web"),
@@ -83,7 +82,7 @@ def prepare_log_for_insert(log: dict) -> tuple:
         log.get("status"),
         log.get("response_time_ms"),
         log.get("user_agent"),
-        json.dumps(log),  # Store entire log as JSONB
+        json.dumps(log),
     )
 
 
@@ -99,9 +98,7 @@ def insert_logs_batch(cursor, logs: list[dict]):
         ) VALUES %s
     """
 
-    # Prepare data for batch insert
     data = [prepare_log_for_insert(log) for log in logs]
-
     execute_values(cursor, query, data, page_size=len(data))
     return len(data)
 
@@ -134,7 +131,6 @@ def ingest_from_file(filepath: str, batch_size: int = 100):
                 else:
                     total_failed += 1
 
-                # Insert batch when full
                 if len(batch) >= batch_size:
                     try:
                         inserted = insert_logs_batch(cursor, batch)
@@ -148,7 +144,6 @@ def ingest_from_file(filepath: str, batch_size: int = 100):
                     finally:
                         batch = []
 
-        # Insert remaining logs
         if batch:
             try:
                 inserted = insert_logs_batch(cursor, batch)
@@ -191,20 +186,15 @@ Examples:
         """,
     )
 
-    parser.add_argument(
-        "logfile",
-        help="Path to JSON log file"
-    )
-
+    parser.add_argument("logfile", help="Path to JSON log file")
     parser.add_argument(
         "--batch-size",
         type=int,
         default=100,
-        help="Number of logs to insert per batch (default: 100)"
+        help="Number of logs to insert per batch (default: 100)",
     )
 
     args = parser.parse_args()
-
     ingest_from_file(args.logfile, args.batch_size)
 
 

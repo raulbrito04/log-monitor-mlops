@@ -1,6 +1,4 @@
-version: '3.8'
-
-services:
+﻿services:
   postgres:
     image: timescale/timescaledb:latest-pg16
     container_name: logmonitor-postgres
@@ -9,27 +7,270 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
       POSTGRES_DB: ${POSTGRES_DB:-logmonitor}
       PGDATA: /var/lib/postgresql/data/pgdata
-
-        
     ports:
       - "5432:5432"
     volumes:
-      - ../data/postgres:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-      
+      - ./scripts/healthcheck_postgres.sh:/docker/scripts/healthcheck_postgres.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD", "sh", "/docker/scripts/healthcheck_postgres.sh"]
+      interval: 15s
+      timeout: 10s
       retries: 5
+      start_period: 30s
     networks:
       - backend
+    restart: unless-stopped
+
+  mlflow:
+    image: python:3.12-slim
+    container_name: logmonitor-mlflow
+    environment:
+      _MLFLOW_SERVER_FILE_STORE: "sqlite:////mlruns/mlflow.db"
+      _MLFLOW_SERVER_ARTIFACT_ROOT: "/mlruns"
+      MLFLOW_TRACKING_URI: "sqlite:////mlruns/mlflow.db"
+    command: >
+      sh -c "pip install --no-cache-dir mlflow==2.22.2 &&
+             gunicorn --bind 0.0.0.0:5000 --workers 2 --timeout 120 mlflow.server:app"
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow_data:/mlruns
+      - ./scripts/healthcheck_mlflow.sh:/docker/scripts/healthcheck_mlflow.sh:ro
+    healthcheck:
+      test: ["CMD", "sh", "/docker/scripts/healthcheck_mlflow.sh"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - backend
+    restart: unless-stopped
+
+  flask-app:
+    build:
+      context: ..
+      dockerfile: docker/dockerfiles/Dockerfile.flask
+    container_name: logmonitor-flask
+    environment:
+      LOGMONITOR_ENV: ${LOGMONITOR_ENV:-development}
+      FLASK_SECRET_KEY: ${FLASK_SECRET_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      FLASK_HOST: ${FLASK_HOST:-0.0.0.0}
+      FLASK_PORT: ${FLASK_PORT:-5001}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-logmonitor}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      LOG_FILE: /app/logs/app.log
+      DEMO_ADMIN_USER: ${DEMO_ADMIN_USER:-admin}
+      DEMO_ADMIN_PASS: ${DEMO_ADMIN_PASS:-admin123}
+      DEMO_USER1_USER: ${DEMO_USER1_USER:-user1}
+      DEMO_USER1_PASS: ${DEMO_USER1_PASS:-password1}
+      DEMO_USER2_USER: ${DEMO_USER2_USER:-user2}
+      DEMO_USER2_PASS: ${DEMO_USER2_PASS:-password2}
+      DEMO_ANALYST_USER: ${DEMO_ANALYST_USER:-analyst}
+      DEMO_ANALYST_PASS: ${DEMO_ANALYST_PASS:-analyst99}
+      RATELIMIT_DEFAULT: ${RATELIMIT_DEFAULT:-200 per hour}
+      RATELIMIT_LOGIN: ${RATELIMIT_LOGIN:-5 per minute}
+      RATELIMIT_ADMIN: ${RATELIMIT_ADMIN:-20 per minute}
+      RATELIMIT_SEARCH: ${RATELIMIT_SEARCH:-30 per minute}
+      RATELIMIT_UPLOAD: ${RATELIMIT_UPLOAD:-10 per minute}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-5}
+    ports:
+      - "5001:5001"
+    volumes:
+      - logs_data:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5001/health', timeout=5).raise_for_status()"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+      - frontend
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ..
+      dockerfile: docker/dockerfiles/Dockerfile.dashboard
+    container_name: logmonitor-dashboard
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-logmonitor}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-http://prometheus:9090}
+      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:-admin}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-admin}
+      DASHBOARD_REFRESH_SECONDS: ${DASHBOARD_REFRESH_SECONDS:-30}
+    ports:
+      - "8501:8501"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+    networks:
+      - backend
+      - monitoring
+    restart: unless-stopped
+
+  ingester:
+    build:
+      context: ..
+      dockerfile: docker/dockerfiles/Dockerfile.ingester
+    container_name: logmonitor-ingester
+    command: ["sh", "/docker/scripts/run_ingester_loop.sh"]
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-logmonitor}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      LOG_FILE: /app/logs/app.log
+      INGESTER_BATCH_SIZE: "100"
+      INGESTER_POLL_INTERVAL: "10"
+    volumes:
+      - logs_data:/app/logs
+      - ./scripts/run_ingester_loop.sh:/docker/scripts/run_ingester_loop.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      flask-app:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+
+  rule-engine:
+    build:
+      context: ..
+      dockerfile: docker/dockerfiles/Dockerfile.rule-engine
+    container_name: logmonitor-rule-engine
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-logmonitor}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+
+  ml-pipeline:
+    build:
+      context: ..
+      dockerfile: docker/dockerfiles/Dockerfile.ml-pipeline
+    container_name: logmonitor-ml-pipeline
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-logmonitor}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MPLBACKEND: Agg
+    volumes:
+      - models_data:/app/models
+      - mlflow_data:/mlruns
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: logmonitor-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    depends_on:
+      flask-app:
+        condition: service_started
+      alertmanager:
+        condition: service_started
+    networks:
+      - backend
+      - monitoring
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: logmonitor-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_SERVER_ROOT_URL: http://localhost:3000
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_started
+    networks:
+      - monitoring
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: logmonitor-alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    networks:
+      - monitoring
     restart: unless-stopped
 
 networks:
   backend:
     driver: bridge
+  frontend:
+    driver: bridge
+  monitoring:
+    driver: bridge
 
 volumes:
   postgres_data:
-
+    driver: local
+  mlflow_data:
+    driver: local
+  models_data:
+    driver: local
+  logs_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  alertmanager_data:
+    driver: local

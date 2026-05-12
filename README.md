@@ -1,447 +1,280 @@
-# 🔍 Log Monitor MLOps
+# Log Monitor MLOps
 
-Sistema híbrido de deteção de anomalias em logs web usando **regras determinísticas** + **machine learning**.
+[![CI Pipeline](https://github.com/RaulBrito04/log-monitor-mlops/actions/workflows/ci.yml/badge.svg)](https://github.com/RaulBrito04/log-monitor-mlops/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-70.97%25-yellow)](https://github.com/RaulBrito04/log-monitor-mlops/actions)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
+[![Docker](https://img.shields.io/badge/docker-compose-2496ED.svg?logo=docker)](docker/docker-compose.yml)
+[![Security: Bandit](https://img.shields.io/badge/bandit-0%20HIGH%2F0%20MEDIUM-brightgreen.svg)](https://github.com/PyCQA/bandit)
 
----
-
-## 📊 Status do Projeto
-
-**Progresso:** 40% completo (Semana 6/16)  
-**Apresentação Intercalar:** 11-15 Maio 2025  
-**Objetivo Intercalar:** Plano A completo
+Sistema híbrido open-source de deteção de anomalias em logs de aplicações web, combinando regras SQL determinísticas com machine learning não-supervisionado e explicabilidade SHAP. Alternativa viável a SIEMs comerciais (€10k–€100k/ano) para PMEs e contexto académico.
 
 ---
 
-## ✅ Fases Completadas
+## Estado atual
 
-### **Semana 1-2: Foundation & Logging**
-- ✅ Flask application com 6 rotas funcionais
-- ✅ Logging estruturado JSON
-- ✅ Traffic generator com padrões de ataque
-- ✅ 2,560+ logs de teste gerados
+**Semana 15 de 23 — Goal C em curso**
 
-### **Semana 3: PostgreSQL + TimescaleDB**
-- ✅ PostgreSQL 16 em Docker
-- ✅ TimescaleDB hypertable para time-series optimization
-- ✅ 5 tabelas: raw_logs, alerts, ml_predictions, model_runs, feedback
-- ✅ Ingestão: 9,355 logs/segundo
-- ✅ 2,566 logs armazenados
-
-### **Semana 4: Rule-Based Detection**
-- ✅ 6 regras SQL implementadas:
-  - Brute Force (≥5 login failures)
-  - SQL Injection (pattern matching)
-  - Port Scanning (≥10 distinct endpoints)
-  - Path Traversal (../, /etc/passwd patterns)
-  - Suspicious User Agent (sqlmap, nikto, nmap)
-  - Time-Based Anomaly (requests 22h-6h)
-- ✅ Performance: < 50ms por regra
-- ✅ 21 alertas criados em 2,566 logs
-- ✅ Zero falsos positivos nos testes
-
-### **Semana 5: Feature Engineering**
-- ✅ 18 features extraídas:
-  - 2 numéricas diretas (status, response_time)
-  - 6 agregação por IP/janela 5min
-  - 4 temporais (hora, dia, weekend, night)
-  - 3 URL (length, query params)
-  - 1 entropy (Shannon - deteta obfuscation)
-  - 2 behavioral (tempo entre requests)
-- ✅ Correlation analysis: removeu 8 features redundantes
-- ✅ RFE: selecionou 10 features otimizadas
-- ✅ Dataset ML-ready: 2,326 logs, 17.45% anomaly rate
-- ✅ StandardScaler aplicado (normalização)
+| Componente | Estado | Métrica |
+|---|---|---|
+| Ingestão de logs | Operacional | 10.933 logs/s (batch=500) |
+| Rule Engine SQL | Operacional | 6 regras, 0 falsos positivos, 7–41 ms/regra |
+| ML Pipeline híbrido | Operacional | F1=0,838 (IF) · F1=0,783 (RF) · ROC-AUC=0,950 |
+| Explicabilidade SHAP | Operacional | Por alerta, em `experiments/` |
+| Monitorização | Operacional | Prometheus + Grafana + Alertmanager |
+| Dashboard operador | Operacional | Streamlit |
+| CI/CD | Operacional | GitHub Actions — Pylint, Bandit, Trivy, pytest |
+| Security hardening | Concluído (S14) | 0 HIGH/MEDIUM Bandit · 5 containers non-root |
+| Cobertura de testes | 70,97% | Limiar CI ≥70% cumprido |
 
 ---
 
-## 🔄 Em Desenvolvimento
-
-**Semana 6: Model Training** (PRÓXIMO)
-- Isolation Forest (unsupervised anomaly detection)
-- MLflow tracking server
-- 3-5 experimentos com hyperparameter tuning
-- Model Registry (Production stage)
-- Target: F1-score > 0.75
-
----
-
-## ⏳ Roadmap
-
-**Semanas 7-8: ML Pipeline**
-- Semana 7: Hybrid system (Rules + ML)
-- Semana 8: SHAP explainability
-
-**Semanas 9-12: Observability**
-- Prometheus metrics
-- Grafana dashboards
-- Testes automatizados (>70% coverage)
-
-**Semanas 13-16: Production**
-- CI/CD pipeline
-- Security audit
-- Documentação final
-- Apresentação final
-
----
-
-## 🚀 Quick Start
-
-### Pré-requisitos
+## Arranque rápido
 
 ```bash
-# Necessário:
-- Docker + Docker Compose
-- Python 3.10+
-- Git
-```
-
-### 1. Clone e Setup
-
-```bash
-# Clone repo
-git clone <repo-url>
+# Clonar
+git clone https://github.com/RaulBrito04/log-monitor-mlops.git
 cd log-monitor-mlops
 
-# Criar alias útil (opcional)
-echo 'alias projetoLogs="cd ~/projects/log-monitor-mlops && source venv/bin/activate"' >> ~/.bashrc
-source ~/.bashrc
+# Configurar variáveis de ambiente
+cp docker/.env.example docker/.env
+# editar docker/.env com FLASK_SECRET_KEY e credenciais
 
-# Ativar ambiente
-projetoLogs
-```
-
-### 2. Iniciar Serviços
-
-```bash
-# PostgreSQL + TimescaleDB
+# Arrancar o sistema completo (10 containers)
 docker compose -f docker/docker-compose.yml up -d
 
-# Verificar
+# Verificar estado
 docker compose -f docker/docker-compose.yml ps
 ```
 
-### 3. Setup Python
+**Interfaces disponíveis após arranque:**
 
-```bash
-# Criar virtual environment
-python -m venv venv
-source venv/bin/activate
+| Serviço | URL |
+|---|---|
+| Flask app | http://localhost:5001 |
+| Streamlit dashboard | http://localhost:8501 |
+| Grafana | http://localhost:3000 |
+| Prometheus | http://localhost:9090 |
+| Alertmanager | http://localhost:9093 |
+| MLflow | http://localhost:5000 |
 
-# Instalar dependências
-pip install -r requirements.txt
+---
+
+## Arquitectura
+
+10 microserviços em 5 camadas, orquestrados com Docker Compose:
+
 ```
-
-### 4. Ingerir Logs
-
-```bash
-# Carregar logs iniciais
-python src/log_processor/ingester.py
-
-# Verificar
-docker compose -f docker/docker-compose.yml exec postgres psql -U postgres -d logmonitor -c "SELECT COUNT(*) FROM raw_logs;"
-```
-
-### 5. Executar Deteção
-
-```bash
-# Rule-based detection (últimos 7 dias)
-python src/detection/rule_engine.py --mode historical --days 7
-
-# Ver alertas criados
-docker compose -f docker/docker-compose.yml exec postgres psql -U postgres -d logmonitor -c "SELECT alert_type, COUNT(*) FROM alerts GROUP BY alert_type;"
+┌─────────────────────────────────────────────┐
+│  ENTRADA          Flask app + Ingester       │
+│                   10.933 logs/s              │
+└────────────────────────┬────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────┐
+│  ARMAZENAMENTO    PostgreSQL + TimescaleDB   │
+│                   5 tabelas · hypertable     │
+└─────────────────┬──────────┬────────────────┘
+                  │          │
+                  ▼          ▼
+┌──────────────────┐  ┌──────────────────────┐
+│  RULE ENGINE     │  │  ML PIPELINE         │
+│  6 regras SQL    │  │  Isolation Forest    │
+│  0 FP · <41ms   │  │  + Random Forest     │
+└────────┬─────────┘  └──────────┬───────────┘
+         │                       │
+         └──────────┬────────────┘
+                    │
+                    ▼
+┌─────────────────────────────────────────────┐
+│  SCORING HÍBRIDO  CRITICAL/HIGH/MEDIUM/      │
+│                   NORMAL + SHAP             │
+└────────────────────────┬────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────┐
+│  OBSERVABILIDADE  Prometheus · Grafana       │
+│                   Alertmanager · Streamlit   │
+└─────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🏗️ Arquitetura do Sistema
+## Pipeline ML híbrido
+
+**Isolation Forest** (não-supervisionado — novelty detection)
+- Treinado exclusivamente com tráfego normal
+- Deteta ataques nunca vistos (zero-days) por desvio do baseline
+- F1=0,838 · Precision@1%=0,941 · ROC-AUC=0,950
+
+**Random Forest** (supervisionado — padrões conhecidos)
+- F1=0,783 em holdout temporal
+
+**Ablation study** confirma que o ensemble híbrido supera qualquer componente isolado em F1-score.
+
+**MLflow** regista cada run de treino: parâmetros, métricas, artefactos — auditabilidade completa do modelo.
+
+---
+
+## Regras de deteção
+
+| Regra | Critério | Latência |
+|---|---|---|
+| Brute Force | ≥5 falhas de login por IP/5min | 7,6 ms |
+| SQL Injection | padrões `' OR`, `UNION SELECT`, etc. | 12,3 ms |
+| Port Scanning | ≥10 endpoints distintos por IP/5min | 18,1 ms |
+| Path Traversal | padrões `../`, `/etc/passwd` | 9,4 ms |
+| Suspicious User Agent | sqlmap, nikto, nmap, masscan | 8,2 ms |
+| Time-Based Anomaly | pedidos entre 22h–6h | 40,8 ms |
+
+---
+
+## Segurança
+
+Security hardening aplicado na Semana 14 em toda a stack:
+
+- **Bandit:** 0 findings HIGH · 0 MEDIUM na superfície Flask e ML
+- **Trivy:** container scanning automático no CI para todas as imagens
+- **Dependabot:** gestão automática de dependências com CVEs
+- **Non-root:** 5 containers de runtime executam como `appuser`
+- **Rate limiting:** activo em `/login`, `/admin`, `/search`, `/api/upload`
+- **Validação de inputs:** Pydantic em todos os endpoints de ingestão
+- **Secrets:** variáveis de ambiente — nunca em código
+- **HTTP security headers:** aplicados centralmente via middleware
+- **Pickle trust boundary:** `_safe_load_pickle` impede carregamento de artefactos externos
+- **54 testes de segurança** automatizados a verde
+
+Conformidade por design: GDPR Art. 22 (SHAP), AI Act 2024 (auditabilidade MLflow), NIS2 (logging de eventos de segurança), OWASP Top 10.
+
+---
+
+## Monitorização
+
+**Prometheus** recolhe 9 métricas custom `logmonitor_*` a cada 15 segundos.
+
+**Grafana** provisionado automaticamente no arranque com 3 dashboards:
+- *System Overview* — ingestão, latência, disponibilidade
+- *ML Performance* — F1, predições por severidade, drift
+- *Security Alerts* — alertas por tipo, rate limit hits, blocked auth
+
+**SLOs definidos:**
+- Disponibilidade ≥ 99,5%
+- Latência p95 < 200 ms
+- F1 do modelo ≥ 0,75
+- Data freshness < 5 min
+
+**Alertmanager** dispara alertas quando SLOs são violados — sem intervenção humana.
+
+---
+
+## CI/CD
+
+Pipeline GitHub Actions em `.github/workflows/ci.yml`, executa em cada push:
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                      LOG SOURCES                         │
-│  Flask App (6 rotas) → Traffic Generator (ataques)       │
-└────────────────────────┬─────────────────────────────────┘
-                         │
-                         ▼
-┌──────────────────────────────────────────────────────────┐
-│                   INGESTION LAYER                        │
-│  Python Script → 9,355 logs/segundo                      │
-└────────────────────────┬─────────────────────────────────┘
-                         │
-                         ▼
-┌──────────────────────────────────────────────────────────┐
-│              STORAGE: PostgreSQL + TimescaleDB           │
-│  • raw_logs (hypertable)                                 │
-│  • alerts, ml_predictions, model_runs, feedback          │
-│  • 2,566 logs armazenados                                │
-└────────────────────────┬─────────────────────────────────┘
-                         │
-                ┌────────┴────────┐
-                │                 │
-                ▼                 ▼
-    ┌───────────────────┐  ┌──────────────────┐
-    │  RULE ENGINE (6)  │  │  ML PIPELINE     │
-    │  < 50ms/regra     │  │  (em dev)        │
-    │  21 alertas       │  │  Isolation Forest│
-    └───────────────────┘  └──────────────────┘
-                │                 │
-                └────────┬────────┘
-                         │
-                         ▼
-              ┌────────────────────┐
-              │  HYBRID SCORING    │
-              │  (Rules + ML)      │
-              │  (Semana 7)        │
-              └────────────────────┘
+Code Quality  →  Pylint (≥7,0/10) + Bandit (0 HIGH/MEDIUM)
+Tests         →  pytest + cobertura ≥70%
+Build         →  5 imagens Docker + Trivy scan (CRITICAL/HIGH)
+Summary       →  relatório no GitHub
 ```
 
 ---
 
-## 🛠️ Stack Tecnológico
+## Stack tecnológico
 
-**Backend & Database:**
-- Python 3.12
-- PostgreSQL 16 + TimescaleDB extension
-- Docker + Docker Compose
-
-**Machine Learning:**
-- Scikit-learn (Isolation Forest)
-- Pandas + NumPy
-- SciPy (entropy calculation)
-- MLflow (experiment tracking - em setup)
-
-**Em Desenvolvimento:**
-- Prometheus (métricas)
-- Grafana (dashboards)
-- GitHub Actions (CI/CD)
+| Camada | Tecnologias |
+|---|---|
+| Aplicação | Python 3.12 · Flask · Pydantic · Flask-Limiter |
+| Armazenamento | PostgreSQL 16 · TimescaleDB · SQLAlchemy |
+| ML | Scikit-learn · Isolation Forest · Random Forest · SHAP |
+| MLOps | MLflow · Joblib |
+| Containers | Docker · Docker Compose · multi-stage builds |
+| Monitorização | Prometheus · Grafana · Alertmanager |
+| Dashboard | Streamlit |
+| CI/CD | GitHub Actions · Bandit · Pylint · Trivy · Dependabot |
+| Testes | pytest · Locust (load testing) |
 
 ---
 
-## 📂 Estrutura do Projeto
+## Estrutura do projeto
 
 ```
 log-monitor-mlops/
-│
+├── .github/workflows/ci.yml       # Pipeline CI/CD
 ├── docker/
-│   ├── docker-compose.yml      # PostgreSQL + TimescaleDB
-│   └── init.sql                # Database schema & hypertable
-│
+│   ├── docker-compose.yml         # Orquestração dos 10 containers
+│   ├── Dockerfile.flask           # multi-stage · non-root
+│   ├── Dockerfile.dashboard
+│   ├── Dockerfile.ingester
+│   ├── Dockerfile.ml-pipeline
+│   ├── Dockerfile.rule-engine
+│   └── grafana/provisioning/      # Dashboards e datasources como código
 ├── src/
-│   ├── log_processor/
-│   │   └── ingester.py         # Log ingestion (9355 logs/s)
-│   │
+│   ├── flask_app/
+│   │   ├── app.py                 # Flask app + rotas
+│   │   ├── config.py              # Configuração centralizada
+│   │   ├── security.py            # Security headers
+│   │   ├── limiter.py             # Rate limiting
+│   │   └── validators.py          # Validação de inputs
 │   ├── detection/
-│   │   └── rule_engine.py      # 6 regras SQL (<50ms cada)
-│   │
-│   └── ml/
-│       ├── feature_engineering.py  # 18 features → 10 otimizadas
-│       └── train_model.py      # Isolation Forest (em dev)
-│
-├── data/
-│   ├── ml_dataset.pkl          # Dataset ML-ready (2326x13)
-│   └── feature_summary.json    # Metadados features
-│
-├── models/
-│   ├── scaler.pkl              # StandardScaler treinado
-│   └── feature_selector.pkl    # RFE selector
-│
-├── logs/
-│   └── app.log                 # Application logs
-│
-├── .env                        # Environment variables
-├── requirements.txt            # Python dependencies
-└── README.md                   # Este ficheiro
+│   │   └── rule_engine.py         # 6 regras SQL
+│   ├── ml/
+│   │   ├── feature_engineering.py # 10 features otimizadas
+│   │   ├── train_model.py         # Treino IF + RF + MLflow
+│   │   └── hybrid_pipeline.py     # Scoring híbrido + pickle trust boundary
+│   └── monitoring/
+│       └── metrics.py             # Métricas Prometheus custom
+├── tests/
+│   ├── unit/
+│   │   └── test_security.py       # 54 testes de segurança
+│   └── test_flask_app.py
+├── experiments/                   # Outputs SHAP (não em produção)
+├── models/                        # Artefactos ML versionados
+├── docs/
+│   ├── GLOSSARIO_TECNICO.md       # Glossário de termos do projeto
+│   └── security/
+│       └── bandit_exceptions.md   # Justificação de falsos positivos
+├── .bandit.yaml                   # Configuração Bandit
+├── requirements.txt
+└── requirements-dev.txt
 ```
 
 ---
 
-## 📈 Métricas Atuais
+## Resultados de performance
 
-### Ingestão (Semana 3)
-- **Performance:** 9,355 logs/segundo
-- **Volume:** 2,566 logs armazenados
-- **Período:** 20 dias de dados
-
-### Rule-Based Detection (Semana 4)
-- **Regras ativas:** 6
-- **Latência:** < 50ms por regra
-- **Alertas criados:** 21
-- **Falsos positivos:** 0 (nos testes)
-- **Distribuição:**
-  - Suspicious User Agent: 9 alertas
-  - Brute Force: 4 alertas
-  - Time Anomaly: 4 alertas
-  - SQL Injection: 2 alertas
-  - Path Traversal: 2 alertas
-
-### Feature Engineering (Semana 5)
-- **Features extraídas:** 18
-- **Features finais:** 10 (após correlation + RFE)
-- **Dataset shape:** 2,326 logs × 10 features
-- **Anomaly rate:** 17.45% (412 logs anómalos)
-- **Label balance:** 82.55% normal / 17.45% anomalia (ideal 4:1)
+| Métrica | Valor |
+|---|---|
+| Ingestão | 10.933 logs/s · 39M logs/hora |
+| Load test | 50 utilizadores simultâneos · 0 falhas · latência mediana 3ms |
+| Rule Engine | 6–41 ms por regra · 0 falsos positivos |
+| Isolation Forest F1 | 0,838 |
+| Isolation Forest Precision@1% | 0,941 |
+| Random Forest F1 | 0,783 |
+| ROC-AUC | 0,950 |
+| Cobertura de testes | 70,97% |
+| Testes de segurança | 54 passam |
+| Pylint | 9,18/10 |
 
 ---
 
-## 🎯 Objetivos do Projeto
+## Roadmap — Goal D (Semanas 17–23)
 
-**Principais:**
-1. ✅ Sistema híbrido: Regras (precisão) + ML (generalização)
-2. 🔄 Pipeline reproduzível com MLflow tracking
-3. ⏳ Observability completa (Prometheus + Grafana)
-4. ⏳ Explainability via SHAP
-5. ⏳ CI/CD automatizado
+| Sprint | Entregável |
+|---|---|
+| S17 · Mai | Human-in-loop: UI de marcação de FP/FN no Streamlit |
+| S18 · Mai | Human-in-loop: pipeline de retraining com feedback acumulado |
+| S19 · Jun | Benchmark com dataset CICIDS-2017 |
+| S20 · Jun | LIME — explicabilidade complementar ao SHAP |
+| S21–S22 · Jun | Incident workflow: NEW → INVESTIGATING → RESOLVED |
+| S23 · Jul | Buffer · polimento · documentação final |
 
-**Diferenciadores:**
-- TimescaleDB para otimização de time-series
-- Feature engineering com entropy (deteta obfuscation)
-- RFE para seleção automática de features
-- Ensemble híbrido (rules + ML)
+**Milestone:** entrega do relatório final em 11 Jul 2026 · discussão em 01 Ago 2026.
 
 ---
 
-## 📚 Documentação Adicional
+## Autor
 
-**Tutoriais Completos:**
-- Semana 3: PostgreSQL + TimescaleDB Setup
-- Semana 4: Rule-Based Detection
-- Semana 5: Feature Engineering
-- Semana 6: Model Training (disponível em breve)
-
-**Localizados em:** `/docs/` (a criar)
-
----
-
-## 🔧 Comandos Úteis
-
-### Docker
-
-```bash
-# Iniciar serviços
-docker compose -f docker/docker-compose.yml up -d
-
-# Ver logs
-docker compose -f docker/docker-compose.yml logs -f postgres
-
-# Parar serviços
-docker compose -f docker/docker-compose.yml down
-
-# Reset completo (apaga dados!)
-docker compose -f docker/docker-compose.yml down -v
-sudo rm -rf data/postgres
-```
-
-### PostgreSQL
-
-```bash
-# Entrar no psql
-docker compose -f docker/docker-compose.yml exec postgres psql -U postgres -d logmonitor
-
-# Queries úteis:
-# SELECT COUNT(*) FROM raw_logs;
-# SELECT * FROM alerts ORDER BY created_at DESC LIMIT 10;
-# \dt  (listar tabelas)
-# \q   (sair)
-```
-
-### Python
-
-```bash
-# Ativar venv
-source venv/bin/activate
-
-# Ingerir logs
-python src/log_processor/ingester.py
-
-# Executar regras
-python src/detection/rule_engine.py --mode historical --days 7
-
-# Feature engineering
-python src/ml/feature_engineering.py
-```
-
----
-
-## 🐛 Troubleshooting
-
-### PostgreSQL não inicia
-
-```bash
-# Verificar porta 5432 livre
-lsof -i :5432
-
-# Se ocupada, matar processo
-kill -9 <PID>
-
-# Ou mudar porta no docker-compose.yml
-```
-
-### "No module named 'pandas'"
-
-```bash
-# Verificar venv ativo
-which python  # Deve mostrar path do venv
-
-# Reinstalar dependências
-pip install -r requirements.txt
-```
-
-### TimescaleDB constraint errors
-
-```bash
-# Verificar init.sql está correto
-# PRIMARY KEY deve ser (id, timestamp) - composto!
-# Não pode ter UNIQUE(id) sozinho
-
-# Reset database se necessário
-docker compose -f docker/docker-compose.yml down -v
-sudo rm -rf data/postgres
-docker compose -f docker/docker-compose.yml up -d
-```
-
----
-
-## 🤝 Contribuição
-
-Este é um projeto académico individual.
-
-**Autor:** Raúl Brito
-**Instituição:** IPLUSO  
-**Curso:** Licenciatura em Engenharia Informática e Aplicações
-**Ano Letivo:** 2025/2026  
-**Orientador:** Acácio Carmona
-
----
-
-## 📝 Licença
-
-Projeto académico - Todos os direitos reservados.
-
----
-
-## 📅 Changelog
-
-**2026-03-16:**
-- ✅ README completo adicionado
-- ✅ Documentação estruturada (Quick Start, Troubleshooting)
-- ✅ Projeto 40% completo
-
-**2026-03-12:**
-- ✅ Semana 5 completa: Feature Engineering
-- ✅ 10 features otimizadas selecionadas via RFE
-- ✅ Dataset ML-ready criado (2,326 logs, 17.45% anomaly rate)
-
-**2026-03-09:**
-- ✅ Semana 4 completa: Rule-Based Detection
-- ✅ 6 regras implementadas com <50ms latência
-- ✅ 21 alertas criados em 2,566 logs
-
-**2026-03-05:**
-- ✅ Semana 3 completa: PostgreSQL + TimescaleDB
-- ✅ Hypertable funcional com PRIMARY KEY composto
-- ✅ 2,566 logs ingeridos a 9,355 logs/segundo
-
----
-
-**Status:** 🚧 Em desenvolvimento ativo  
-**Última atualização:** 16 Março 2026  
-**Próxima milestone:** Semana 6 - Model Training (Isolation Forest + MLflow)
+**Raúl Brito** · A22309632  
+Licenciatura em Engenharia Informática e Aplicações  
+IPLUSO — Escola Superior de Engenharia e Tecnologias  
+Ano letivo 2025/2026 · Orientador: Acácio Carmona

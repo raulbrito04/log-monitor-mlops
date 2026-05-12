@@ -1,0 +1,30 @@
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+FROM python:3.12-slim AS runtime
+
+WORKDIR /app
+
+RUN groupadd --gid 1001 appgroup \
+    && useradd --uid 1001 --gid appgroup --no-create-home --shell /usr/sbin/nologin appuser
+
+COPY --from=builder /install /usr/local
+COPY --chown=appuser:appgroup src/detection/ ./src/detection/
+COPY --chown=appuser:appgroup src/__init__.py ./src/__init__.py
+COPY --chown=appuser:appgroup .env.example ./.env
+
+RUN chown -R appuser:appgroup /app
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+USER appuser
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD python -c "import os, psycopg2; psycopg2.connect(host=os.getenv('POSTGRES_HOST', 'localhost'), port=int(os.getenv('POSTGRES_PORT', '5432')), database=os.getenv('POSTGRES_DB', 'logmonitor'), user=os.getenv('POSTGRES_USER', 'postgres'), password=os.getenv('POSTGRES_PASSWORD', 'changeme')).close(); print('ok')"
+
+CMD ["python", "src/detection/rule_engine.py", "--mode", "realtime", "--interval", "60"]

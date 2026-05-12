@@ -30,3 +30,9 @@ models/*.json
 
 # Temp/test files
 test.txt
+.pytest_cache/
+.hypothesis/
+.pylint.d/
+.coverage
+reports/
+*.sarif

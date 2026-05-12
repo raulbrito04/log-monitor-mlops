@@ -1,0 +1,287 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+  security-events: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          mkdir -p reports
+
+      - name: Pylint
+        run: |
+          pylint src \
+            --output-format=colorized \
+            --rcfile=.pylintrc \
+            --fail-under=7.0
+
+      - name: Bandit
+        run: |
+          bandit -r src \
+            -c .bandit.yaml \
+            -f json \
+            -o reports/bandit_report.json \
+            --exit-zero
+          bandit -r src -c .bandit.yaml -f txt || true
+
+      - name: Upload Bandit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-security-report
+          path: reports/bandit_report.json
+          retention-days: 30
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: changeme_em_prod
+          POSTGRES_DB: logmonitor
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d logmonitor"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: logmonitor
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: changeme_em_prod
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Create runtime directories
+        run: mkdir -p reports models data experiments logs
+
+      - name: Pytest - unit and app suite
+        run: |
+          pytest tests/unit tests/test_flask_app.py tests/test_dashboard.py tests/test_mlflow.py \
+            -q \
+            --junitxml=reports/pytest_unit.xml \
+            --cov=src \
+            --cov-report=xml:reports/coverage.xml \
+            --cov-report=html:reports/coverage_html \
+            --cov-fail-under=70
+
+      - name: Pytest - integration
+        run: |
+          pytest tests/integration -q -m integration --junitxml=reports/pytest_integration.xml --no-cov
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Pytest Results
+          path: reports/pytest_*.xml
+          reporter: java-junit
+          fail-on-error: false
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: reports/coverage_html/
+          retention-days: 7
+
+      - name: Coverage comment on PR
+        uses: MishaKav/pytest-coverage-comment@main
+        if: github.event_name == 'pull_request'
+        with:
+          pytest-coverage-path: reports/coverage.xml
+          junitxml-path: reports/pytest_unit.xml
+
+  build:
+    name: Build and Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs:
+      - quality
+      - test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build flask-app image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/dockerfiles/Dockerfile.flask
+          push: false
+          load: true
+          tags: logmonitor/flask-app:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build dashboard image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/dockerfiles/Dockerfile.dashboard
+          push: false
+          load: true
+          tags: logmonitor/dashboard:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build ml-pipeline image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/dockerfiles/Dockerfile.ml-pipeline
+          push: false
+          load: true
+          tags: logmonitor/ml-pipeline:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build rule-engine image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/dockerfiles/Dockerfile.rule-engine
+          push: false
+          load: true
+          tags: logmonitor/rule-engine:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build ingester image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/dockerfiles/Dockerfile.ingester
+          push: false
+          load: true
+          tags: logmonitor/ingester:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create reports directory
+        run: mkdir -p reports
+
+      - name: Trivy scan - flask-app
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: logmonitor/flask-app:ci
+          format: sarif
+          output: reports/trivy-flask.sarif
+          severity: CRITICAL,HIGH
+          exit-code: 0
+
+      - name: Trivy scan - ml-pipeline
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: logmonitor/ml-pipeline:ci
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: 0
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: reports/trivy-flask.sarif
+
+      - name: Build summary
+        run: |
+          {
+            echo "## Docker Images Built"
+            echo ""
+            echo "- logmonitor/flask-app:ci"
+            echo "- logmonitor/dashboard:ci"
+            echo "- logmonitor/ml-pipeline:ci"
+            echo "- logmonitor/rule-engine:ci"
+            echo "- logmonitor/ingester:ci"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  notify:
+    name: Pipeline Summary
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - quality
+      - test
+      - build
+
+    steps:
+      - name: Write summary
+        run: |
+          {
+            echo "## CI Pipeline Summary"
+            echo ""
+            echo "| Job | Status |"
+            echo "|-----|--------|"
+            echo "| Code Quality | ${{ needs.quality.result }} |"
+            echo "| Tests | ${{ needs.test.result }} |"
+            echo "| Build and Scan | ${{ needs.build.result }} |"
+            echo ""
+            if [ "${{ needs.quality.result }}" = "success" ] && [ "${{ needs.test.result }}" = "success" ] && [ "${{ needs.build.result }}" = "success" ]; then
+              echo "All checks passed."
+            else
+              echo "One or more checks failed."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

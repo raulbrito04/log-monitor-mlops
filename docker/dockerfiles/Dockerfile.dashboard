@@ -1,0 +1,33 @@
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+FROM python:3.12-slim AS runtime
+
+WORKDIR /app
+
+RUN groupadd --gid 1001 appgroup \
+    && useradd --uid 1001 --gid appgroup --no-create-home --shell /usr/sbin/nologin appuser
+
+COPY --from=builder /install /usr/local
+COPY --chown=appuser:appgroup src/dashboard/ ./src/dashboard/
+COPY --chown=appuser:appgroup src/__init__.py ./src/__init__.py
+COPY --chown=appuser:appgroup .env.example ./.env
+
+RUN chown -R appuser:appgroup /app
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONPATH=/app
+
+USER appuser
+
+EXPOSE 8501
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=5).read()"
+
+CMD ["streamlit", "run", "src/dashboard/Home.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true", "--browser.gatherUsageStats=false"]

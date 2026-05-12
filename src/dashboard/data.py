@@ -1,0 +1,390 @@
+﻿from __future__ import annotations
+
+from collections.abc import Sequence
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+import pandas as pd
+import psycopg2
+import requests
+import streamlit as st
+from psycopg2.extras import RealDictCursor
+
+from src.dashboard.config import get_config
+
+REQUEST_TIMEOUT_SECONDS = 5
+DEFAULT_PAGE_LIMIT = 250
+
+
+def _db_connection():
+    config = get_config()
+    return psycopg2.connect(
+        host=config.postgres_host,
+        port=config.postgres_port,
+        dbname=config.postgres_db,
+        user=config.postgres_user,
+        password=config.postgres_password,
+    )
+
+
+def _rows(sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
+    with _db_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(sql, tuple(params))
+            return [dict(row) for row in cursor.fetchall()]
+
+
+def _one(sql: str, params: Sequence[Any] = ()) -> dict[str, Any] | None:
+    rows = _rows(sql, params)
+    return rows[0] if rows else None
+
+
+def _prometheus_get(path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    config = get_config()
+    response = requests.get(
+        f"{config.prometheus_url}{path}",
+        params=params,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("status") != "success":
+        raise ValueError(f"Prometheus query failed: {payload}")
+    return payload
+
+
+def _parse_vector_value(payload: dict[str, Any]) -> float | None:
+    results = payload.get("data", {}).get("result", [])
+    if not results:
+        return None
+    value = results[0].get("value", [None, None])[1]
+    return float(value) if value is not None else None
+
+
+def _range_to_frame(payload: dict[str, Any], value_label: str) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for item in payload.get("data", {}).get("result", []):
+        metric = item.get("metric", {})
+        series_label = metric.get("job") or metric.get("model") or metric.get("prediction") or "series"
+        for ts, value in item.get("values", []):
+            rows.append(
+                {
+                    "timestamp": datetime.fromtimestamp(float(ts), tz=timezone.utc),
+                    value_label: float(value),
+                    "series": series_label,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _fetch_targets() -> list[dict[str, Any]]:
+    payload = _prometheus_get("/api/v1/targets")
+    targets = payload.get("data", {}).get("activeTargets", [])
+    result = []
+    for target in targets:
+        labels = target.get("labels", {})
+        result.append(
+            {
+                "job": labels.get("job", "unknown"),
+                "instance": labels.get("instance", "unknown"),
+                "health": target.get("health", "unknown"),
+                "last_error": target.get("lastError", ""),
+                "scrape_url": target.get("scrapeUrl", ""),
+            }
+        )
+    return result
+
+
+def _fetch_overview_snapshot() -> dict[str, Any]:
+    total_alerts = int(_one("SELECT COUNT(*) AS count FROM alerts")["count"])
+    active_alerts = _rows(
+        """
+        SELECT severity, COUNT(*)::int AS count
+        FROM alerts
+        WHERE timestamp > NOW() - INTERVAL '24 hours'
+        GROUP BY severity
+        ORDER BY count DESC
+        """
+    )
+    recent_anomalies = _rows(
+        """
+        SELECT date_trunc('hour', created_at) AS bucket, COUNT(*)::int AS count
+        FROM hybrid_scores
+        WHERE is_anomaly = TRUE
+          AND created_at > NOW() - INTERVAL '24 hours'
+        GROUP BY bucket
+        ORDER BY bucket
+        """
+    )
+    recent_alerts = _rows(
+        """
+        SELECT date_trunc('hour', timestamp) AS bucket, COUNT(*)::int AS count
+        FROM alerts
+        WHERE timestamp > NOW() - INTERVAL '24 hours'
+        GROUP BY bucket
+        ORDER BY bucket
+        """
+    )
+    latest_log = _one("SELECT MAX(timestamp) AS timestamp FROM raw_logs")
+    latest_f1 = _parse_vector_value(_prometheus_get("/api/v1/query", {"query": "logmonitor_ml_model_f1_score"}))
+    data_freshness = _parse_vector_value(_prometheus_get("/api/v1/query", {"query": "logmonitor_data_freshness_seconds"}))
+    return {
+        "total_alerts": total_alerts,
+        "active_alerts": active_alerts,
+        "recent_anomalies": recent_anomalies,
+        "recent_alerts": recent_alerts,
+        "latest_log_timestamp": latest_log["timestamp"] if latest_log else None,
+        "latest_f1": latest_f1,
+        "data_freshness_seconds": data_freshness,
+        "targets": _fetch_targets(),
+    }
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def fetch_overview_snapshot() -> dict[str, Any]:
+    return _fetch_overview_snapshot()
+
+
+def _fetch_alert_options() -> dict[str, list[str]]:
+    types = [row["alert_type"] for row in _rows("SELECT DISTINCT alert_type FROM alerts ORDER BY alert_type")]
+    sources = [row["source"] for row in _rows("SELECT DISTINCT source FROM alerts ORDER BY source")]
+    severities = [row["severity"] for row in _rows("SELECT DISTINCT severity FROM alerts ORDER BY severity")]
+    return {"types": types, "sources": sources, "severities": severities}
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_alert_options() -> dict[str, list[str]]:
+    return _fetch_alert_options()
+
+
+def _fetch_alerts(
+    severity: str = "ALL",
+    alert_type: str = "ALL",
+    source: str = "ALL",
+    ip_query: str = "",
+    hours: int = 24,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    sql = [
+        """
+        SELECT id, alert_type, severity, source, confidence, description,
+               ip::text AS ip, timestamp, metadata, log_ids,
+               COALESCE(array_length(log_ids, 1), 0) AS related_logs
+        FROM alerts
+        WHERE timestamp > NOW() - (%s * INTERVAL '1 hour')
+        """
+    ]
+    params: list[Any] = [hours]
+    if severity != "ALL":
+        sql.append("AND severity = %s")
+        params.append(severity)
+    if alert_type != "ALL":
+        sql.append("AND alert_type = %s")
+        params.append(alert_type)
+    if source != "ALL":
+        sql.append("AND source = %s")
+        params.append(source)
+    if ip_query:
+        sql.append("AND ip::text ILIKE %s")
+        params.append(f"%{ip_query}%")
+    sql.append("ORDER BY timestamp DESC LIMIT %s")
+    params.append(limit)
+    return _rows("\n".join(sql), params)
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def fetch_alerts(
+    severity: str = "ALL",
+    alert_type: str = "ALL",
+    source: str = "ALL",
+    ip_query: str = "",
+    hours: int = 24,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    return _fetch_alerts(severity, alert_type, source, ip_query, hours, limit)
+
+
+def _fetch_alert_detail(alert_id: int) -> dict[str, Any] | None:
+    return _one(
+        """
+        SELECT id, alert_type, severity, source, confidence, description,
+               ip::text AS ip, timestamp, metadata, log_ids, created_at
+        FROM alerts
+        WHERE id = %s
+        """,
+        (alert_id,),
+    )
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def fetch_alert_detail(alert_id: int) -> dict[str, Any] | None:
+    return _fetch_alert_detail(alert_id)
+
+
+def _fetch_logs_for_ids(log_ids: tuple[int, ...], limit: int = 50) -> list[dict[str, Any]]:
+    if not log_ids:
+        return []
+    return _rows(
+        """
+        SELECT id, timestamp, ip::text AS ip, method, endpoint, status,
+               response_time_ms, data
+        FROM raw_logs
+        WHERE id = ANY(%s)
+        ORDER BY timestamp DESC
+        LIMIT %s
+        """,
+        (list(log_ids), limit),
+    )
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def fetch_logs_for_ids(log_ids: tuple[int, ...], limit: int = 50) -> list[dict[str, Any]]:
+    return _fetch_logs_for_ids(log_ids, limit)
+
+
+def _fetch_logs(
+    hours: int = 24,
+    ip_query: str = "",
+    endpoint_query: str = "",
+    method: str = "ALL",
+    status_code: int | None = None,
+    search_query: str = "",
+    limit: int = DEFAULT_PAGE_LIMIT,
+) -> list[dict[str, Any]]:
+    sql = [
+        """
+        SELECT id, timestamp, ip::text AS ip, method, endpoint, status,
+               response_time_ms, user_agent, data
+        FROM raw_logs
+        WHERE timestamp > NOW() - (%s * INTERVAL '1 hour')
+        """
+    ]
+    params: list[Any] = [hours]
+    if ip_query:
+        sql.append("AND ip::text ILIKE %s")
+        params.append(f"%{ip_query}%")
+    if endpoint_query:
+        sql.append("AND endpoint ILIKE %s")
+        params.append(f"%{endpoint_query}%")
+    if method != "ALL":
+        sql.append("AND method = %s")
+        params.append(method)
+    if status_code is not None:
+        sql.append("AND status = %s")
+        params.append(status_code)
+    if search_query:
+        sql.append("AND (endpoint ILIKE %s OR CAST(data AS TEXT) ILIKE %s)")
+        params.extend([f"%{search_query}%", f"%{search_query}%"])
+    sql.append("ORDER BY timestamp DESC LIMIT %s")
+    params.append(limit)
+    return _rows("\n".join(sql), params)
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def fetch_logs(
+    hours: int = 24,
+    ip_query: str = "",
+    endpoint_query: str = "",
+    method: str = "ALL",
+    status_code: int | None = None,
+    search_query: str = "",
+    limit: int = DEFAULT_PAGE_LIMIT,
+) -> list[dict[str, Any]]:
+    return _fetch_logs(hours, ip_query, endpoint_query, method, status_code, search_query, limit)
+
+
+def _fetch_log_context(log_id: int) -> dict[str, Any]:
+    hybrid_score = _one(
+        """
+        SELECT log_id, rule_score, ml_score, final_score, severity, triggered_rules,
+               ml_confidence, is_anomaly, created_at
+        FROM hybrid_scores
+        WHERE log_id = %s
+        """,
+        (log_id,),
+    )
+    related_alerts = _rows(
+        """
+        SELECT id, alert_type, severity, source, description, timestamp,
+               ip::text AS ip, confidence
+        FROM alerts
+        WHERE %s = ANY(log_ids)
+        ORDER BY timestamp DESC
+        LIMIT 25
+        """,
+        (log_id,),
+    )
+    return {"hybrid_score": hybrid_score, "related_alerts": related_alerts}
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def fetch_log_context(log_id: int) -> dict[str, Any]:
+    return _fetch_log_context(log_id)
+
+
+def _fetch_prediction_split() -> list[dict[str, Any]]:
+    return _rows(
+        """
+        SELECT CASE WHEN is_anomaly THEN 'anomaly' ELSE 'normal' END AS prediction,
+               COUNT(*)::int AS count
+        FROM hybrid_scores
+        GROUP BY prediction
+        ORDER BY prediction
+        """
+    )
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def fetch_prediction_split() -> list[dict[str, Any]]:
+    return _fetch_prediction_split()
+
+
+def _fetch_alert_trend(hours: int = 24) -> list[dict[str, Any]]:
+    return _rows(
+        """
+        SELECT date_trunc('hour', timestamp) AS bucket, COUNT(*)::int AS count
+        FROM alerts
+        WHERE timestamp > NOW() - (%s * INTERVAL '1 hour')
+        GROUP BY bucket
+        ORDER BY bucket
+        """,
+        (hours,),
+    )
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def fetch_alert_trend(hours: int = 24) -> list[dict[str, Any]]:
+    return _fetch_alert_trend(hours)
+
+
+def _fetch_ml_f1_history(hours: int = 24, step: str = "5m") -> pd.DataFrame:
+    end_time = datetime.now(timezone.utc)
+    start_time = end_time - timedelta(hours=hours)
+    payload = _prometheus_get(
+        "/api/v1/query_range",
+        {
+            "query": "logmonitor_ml_model_f1_score",
+            "start": start_time.timestamp(),
+            "end": end_time.timestamp(),
+            "step": step,
+        },
+    )
+    return _range_to_frame(payload, "f1_score")
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def fetch_ml_f1_history(hours: int = 24, step: str = "5m") -> pd.DataFrame:
+    return _fetch_ml_f1_history(hours, step)
+
+
+def clear_dashboard_caches() -> None:
+    fetch_overview_snapshot.clear()
+    fetch_alert_options.clear()
+    fetch_alerts.clear()
+    fetch_alert_detail.clear()
+    fetch_logs_for_ids.clear()
+    fetch_logs.clear()
+    fetch_log_context.clear()
+    fetch_prediction_split.clear()
+    fetch_alert_trend.clear()
+    fetch_ml_f1_history.clear()

@@ -90,3 +90,20 @@ CREATE TABLE feedback (
 CREATE INDEX idx_feedback_alert_id ON feedback(alert_id);
 CREATE INDEX idx_feedback_label ON feedback(label);
 CREATE INDEX idx_feedback_created_at ON feedback(created_at DESC);
+
+CREATE TABLE hybrid_scores (
+    log_id BIGINT PRIMARY KEY,
+    rule_score FLOAT NOT NULL CHECK (rule_score >= 0 AND rule_score <= 1),
+    ml_score FLOAT NOT NULL CHECK (ml_score >= 0 AND ml_score <= 1),
+    final_score FLOAT NOT NULL CHECK (final_score >= 0 AND final_score <= 1),
+    severity VARCHAR(20) NOT NULL CHECK (severity IN ('NORMAL', 'MEDIUM', 'HIGH', 'CRITICAL')),
+    triggered_rules TEXT[] DEFAULT ARRAY[]::TEXT[],
+    ml_confidence FLOAT CHECK (ml_confidence >= 0 AND ml_confidence <= 1),
+    is_anomaly BOOLEAN NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_hybrid_scores_final_score ON hybrid_scores(final_score DESC);
+CREATE INDEX idx_hybrid_scores_severity ON hybrid_scores(severity);
+CREATE INDEX idx_hybrid_scores_is_anomaly ON hybrid_scores(is_anomaly);
+CREATE INDEX idx_hybrid_scores_created_at ON hybrid_scores(created_at DESC);

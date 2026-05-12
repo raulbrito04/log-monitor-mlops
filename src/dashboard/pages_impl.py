@@ -1,0 +1,269 @@
+﻿from __future__ import annotations
+
+import pandas as pd
+import streamlit as st
+from streamlit_autorefresh import st_autorefresh
+
+from src.dashboard import data
+from src.dashboard.config import get_config
+from src.dashboard.playbooks import get_playbook
+from src.dashboard.ui import format_timestamp, humanize_seconds, render_empty, render_error, render_sidebar
+
+
+def _to_frame(rows: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+
+def _maybe_autorefresh(page_key: str, enabled: bool) -> None:
+    if enabled:
+        config = get_config()
+        st_autorefresh(interval=config.refresh_seconds * 1000, key=page_key)
+
+
+def render_overview_page() -> None:
+    render_sidebar("Overview", auto_refresh=True)
+    _maybe_autorefresh("overview-refresh", True)
+
+    try:
+        snapshot = data.fetch_overview_snapshot()
+    except Exception as exc:
+        render_error(f"Failed to load overview data: {exc}")
+        return
+
+    active_total = sum(item.get("count", 0) for item in snapshot.get("active_alerts", []))
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total alerts", snapshot.get("total_alerts", 0))
+    col2.metric("Active alerts (24h)", active_total)
+    col3.metric("Current ML F1", f"{(snapshot.get('latest_f1') or 0):.3f}")
+    col4.metric("Data freshness", humanize_seconds(snapshot.get("data_freshness_seconds")))
+
+    st.markdown("<p class='dashboard-note'>Overview combines Prometheus live metrics with PostgreSQL investigation context.</p>", unsafe_allow_html=True)
+
+    svc_col, severity_col = st.columns((1.2, 1))
+    with svc_col:
+        st.subheader("Observed services")
+        targets_frame = _to_frame(snapshot.get("targets", []))
+        if targets_frame.empty:
+            render_empty("No Prometheus targets were returned.")
+        else:
+            st.dataframe(targets_frame, use_container_width=True, hide_index=True)
+
+    with severity_col:
+        st.subheader("Active alerts by severity")
+        severity_frame = _to_frame(snapshot.get("active_alerts", []))
+        if severity_frame.empty:
+            render_empty("No active alerts were found in the last 24 hours.")
+        else:
+            st.bar_chart(severity_frame.set_index("severity"))
+
+    trend_col, anomaly_col = st.columns(2)
+    with trend_col:
+        st.subheader("Alert trend (24h)")
+        alert_frame = _to_frame(snapshot.get("recent_alerts", []))
+        if alert_frame.empty:
+            render_empty("No recent alert trend is available.")
+        else:
+            st.line_chart(alert_frame.set_index("bucket")["count"])
+
+    with anomaly_col:
+        st.subheader("Anomaly volume (24h)")
+        anomaly_frame = _to_frame(snapshot.get("recent_anomalies", []))
+        if anomaly_frame.empty:
+            render_empty("No anomaly volume is available yet.")
+        else:
+            st.area_chart(anomaly_frame.set_index("bucket")["count"])
+
+    st.subheader("Latest log seen")
+    st.write(format_timestamp(snapshot.get("latest_log_timestamp")))
+
+
+def render_alerts_page() -> None:
+    render_sidebar("Alerts", auto_refresh=True)
+    _maybe_autorefresh("alerts-refresh", True)
+
+    try:
+        options = data.fetch_alert_options()
+    except Exception as exc:
+        render_error(f"Failed to load alert filter options: {exc}")
+        return
+
+    f1, f2, f3, f4, f5 = st.columns(5)
+    severity = f1.selectbox("Severity", ["ALL", *options.get("severities", [])])
+    alert_type = f2.selectbox("Alert type", ["ALL", *options.get("types", [])])
+    source = f3.selectbox("Source", ["ALL", *options.get("sources", [])])
+    hours = f4.selectbox("Time window", [1, 6, 24, 72], index=2)
+    ip_query = f5.text_input("IP contains")
+
+    try:
+        alerts = data.fetch_alerts(severity, alert_type, source, ip_query, int(hours))
+    except Exception as exc:
+        render_error(f"Failed to load alerts: {exc}")
+        return
+
+    alerts_frame = _to_frame(alerts)
+    st.subheader("Alert queue")
+    if alerts_frame.empty:
+        render_empty("No alerts matched the selected filters.")
+        return
+
+    st.dataframe(
+        alerts_frame[["id", "alert_type", "severity", "source", "ip", "timestamp", "related_logs", "confidence"]],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    selected_alert_id = st.selectbox(
+        "Alert detail",
+        options=alerts_frame["id"].tolist(),
+        format_func=lambda value: f"Alert #{value} - {alerts_frame.loc[alerts_frame['id'] == value, 'alert_type'].iloc[0]}",
+    )
+
+    try:
+        detail = data.fetch_alert_detail(int(selected_alert_id))
+    except Exception as exc:
+        render_error(f"Failed to load selected alert: {exc}")
+        return
+
+    if not detail:
+        render_empty("The selected alert could not be loaded.")
+        return
+
+    playbook = get_playbook(detail["alert_type"])
+    detail_col, playbook_col = st.columns((1.2, 1))
+
+    with detail_col:
+        st.subheader(f"Alert #{detail['id']}")
+        st.write(detail["description"])
+        st.json(
+            {
+                "severity": detail["severity"],
+                "source": detail["source"],
+                "confidence": detail["confidence"],
+                "ip": detail["ip"],
+                "timestamp": format_timestamp(detail["timestamp"]),
+                "related_log_ids": detail.get("log_ids") or [],
+                "metadata": detail.get("metadata") or {},
+            },
+            expanded=False,
+        )
+        related_logs = data.fetch_logs_for_ids(tuple(detail.get("log_ids") or ()))
+        if related_logs:
+            st.subheader("Related logs")
+            st.dataframe(_to_frame(related_logs), use_container_width=True, hide_index=True)
+
+    with playbook_col:
+        st.subheader(playbook["title"])
+        st.write(playbook["summary"])
+        for step in playbook["steps"]:
+            st.write(f"- {step}")
+
+
+def render_log_explorer_page() -> None:
+    render_sidebar("Log Explorer", auto_refresh=False)
+
+    with st.form("log_explorer_filters"):
+        c1, c2, c3 = st.columns(3)
+        hours = c1.selectbox("Time window", [1, 6, 24, 72], index=2)
+        ip_query = c2.text_input("IP contains")
+        endpoint_query = c3.text_input("Endpoint contains")
+        c4, c5, c6 = st.columns(3)
+        method = c4.selectbox("Method", ["ALL", "GET", "POST", "PUT", "DELETE"])
+        status_text = c5.text_input("Status code")
+        search_query = c6.text_input("Free text")
+        submitted = st.form_submit_button("Load logs", use_container_width=True)
+
+    if not submitted and "log_explorer_loaded" not in st.session_state:
+        st.session_state["log_explorer_loaded"] = False
+        render_empty("Choose filters and click 'Load logs' to query raw logs.")
+        return
+
+    st.session_state["log_explorer_loaded"] = True
+    status_code = int(status_text) if status_text.strip().isdigit() else None
+
+    try:
+        logs = data.fetch_logs(int(hours), ip_query, endpoint_query, method, status_code, search_query)
+    except Exception as exc:
+        render_error(f"Failed to load logs: {exc}")
+        return
+
+    logs_frame = _to_frame(logs)
+    if logs_frame.empty:
+        render_empty("No logs matched the selected filters.")
+        return
+
+    st.subheader("Raw log search results")
+    st.dataframe(
+        logs_frame[["id", "timestamp", "ip", "method", "endpoint", "status", "response_time_ms", "user_agent"]],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    selected_log_id = st.selectbox(
+        "Inspect log",
+        options=logs_frame["id"].tolist(),
+        format_func=lambda value: f"Log #{value} - {logs_frame.loc[logs_frame['id'] == value, 'endpoint'].iloc[0]}",
+    )
+
+    selected_log = logs_frame.loc[logs_frame["id"] == selected_log_id].iloc[0].to_dict()
+    context = data.fetch_log_context(int(selected_log_id))
+
+    left, right = st.columns((1.1, 1))
+    with left:
+        st.subheader(f"Log #{selected_log_id}")
+        st.json(selected_log, expanded=False)
+    with right:
+        st.subheader("Related alerts")
+        related_alerts = _to_frame(context.get("related_alerts", []))
+        if related_alerts.empty:
+            render_empty("No related alerts were found for this log.")
+        else:
+            st.dataframe(related_alerts, use_container_width=True, hide_index=True)
+        st.subheader("Hybrid score")
+        if context.get("hybrid_score"):
+            st.json(context["hybrid_score"], expanded=False)
+        else:
+            render_empty("No hybrid score exists for this log.")
+
+
+def render_model_monitoring_page() -> None:
+    render_sidebar("Model Monitoring", auto_refresh=False)
+    if st.button("Refresh now"):
+        data.clear_dashboard_caches()
+        st.rerun()
+
+    try:
+        overview = data.fetch_overview_snapshot()
+        split_rows = data.fetch_prediction_split()
+        alert_trend_rows = data.fetch_alert_trend(24)
+        f1_history = data.fetch_ml_f1_history(24)
+    except Exception as exc:
+        render_error(f"Failed to load model monitoring data: {exc}")
+        return
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Operational F1", f"{(overview.get('latest_f1') or 0):.3f}")
+    c2.metric("Data freshness", humanize_seconds(overview.get("data_freshness_seconds")))
+    c3.metric("Observed targets", len(overview.get("targets", [])))
+
+    split_frame = _to_frame(split_rows)
+    trend_frame = _to_frame(alert_trend_rows)
+
+    left, right = st.columns(2)
+    with left:
+        st.subheader("Prediction split")
+        if split_frame.empty:
+            render_empty("No hybrid prediction data is available.")
+        else:
+            st.bar_chart(split_frame.set_index("prediction")["count"])
+    with right:
+        st.subheader("Alert trend (24h)")
+        if trend_frame.empty:
+            render_empty("No alert trend is available.")
+        else:
+            st.line_chart(trend_frame.set_index("bucket")["count"])
+
+    st.subheader("Model performance over time")
+    if f1_history.empty:
+        render_empty("No Prometheus F1 history is available yet.")
+    else:
+        st.line_chart(f1_history.set_index("timestamp")["f1_score"])

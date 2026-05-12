@@ -1,0 +1,31 @@
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+FROM python:3.12-slim AS runtime
+
+WORKDIR /app
+
+RUN groupadd --gid 1001 appgroup \
+    && useradd --uid 1001 --gid appgroup --no-create-home --shell /usr/sbin/nologin appuser
+
+COPY --from=builder /install /usr/local
+COPY --chown=appuser:appgroup src/log_processor/ ./src/log_processor/
+COPY --chown=appuser:appgroup src/__init__.py ./src/__init__.py
+COPY --chown=appuser:appgroup .env.example ./.env
+
+RUN mkdir -p /app/logs && chown -R appuser:appgroup /app
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV LOG_FILE=/app/logs/app.log
+
+USER appuser
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "from pathlib import Path; assert Path('/app/logs').exists(); print('ok')"
+
+CMD ["python", "src/log_processor/ingester.py", "/app/logs/app.log", "--batch-size", "100"]

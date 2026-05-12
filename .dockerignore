@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.pytest_cache/
+.mypy_cache/
+.coverage
+venv/
+mlruns/
+data/postgres/
+logs/*.log
+*.ipynb

@@ -1,0 +1,30 @@
+NOTA
+Perguntar também o que falta realizar dos goals A-C
+
+Honestamente, estamos em fase de diminishing returns. Os problemas substantivos foram todos corrigidos. O que resta é
+  polish menor:
+
+  ---
+  1. Para 124 — "16 Use Cases" não bate com Table 3 (11 entradas)
+  A tabela lista UC-01 a UC-11 = 11 use cases. O parágrafo diz "8 P0 · 7 P1 · 1 P2 = 16". Os restantes 5 devem estar nos
+   diagramas UML — mas se o júri contar a tabela e encontrar 11, é uma inconsistência visível. Tens de verificar tu no
+  Word se os UML têm os 5 que faltam ou se o número está errado.
+
+  2. Keywords — LIME não está listado
+  LIME é agora referenciado várias vezes no documento mas não aparece nas keywords. Pequena adição: adicionar LIME à
+  lista.
+
+  3. "Documentação Final" no Gantt em S15–S16
+  Com o projeto a ir até S28, "Final" em S16 é impreciso — tal como o M3 que corrigimos. Devia ser "Documentação
+  Intercalar".
+
+  4. Table 7 Goal C — "diferidos para Goal D" repetido duas vezes
+  "Feedback Loop (diferidos para Goal D); CICIDS + Cloud Deploy (diferidos para Goal D)" — ligeiramente redundante. Mais
+   limpo: "Feedback Loop, CICIDS, Cloud Deploy (diferidos para Goal D)".
+
+  ---
+  Estado geral do relatório: está agora substancialmente correto e defensável. Não há mais inconsistências factuais
+  grandes. Os pontos acima são todos de polish — nenhum deles seria atacado por um júri que lesse o documento na
+  totalidade.
+
+  Queres que implemente estes 3-4 pontos finais?

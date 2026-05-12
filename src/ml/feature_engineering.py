@@ -49,10 +49,10 @@ class FeatureEngineer:
         """Conecta ao PostgreSQL"""
         try:
             self.conn = psycopg2.connect(
-                host="localhost",
-                port=5432,
-                database="logmonitor",
-                user="postgres",
+                host=os.getenv("POSTGRES_HOST", "localhost"),
+                port=int(os.getenv("POSTGRES_PORT", "5432")),
+                database=os.getenv("POSTGRES_DB", "logmonitor"),
+                user=os.getenv("POSTGRES_USER", "postgres"),
                 password=os.getenv("POSTGRES_PASSWORD", "changeme")
             )
             self.cursor = self.conn.cursor()
@@ -702,3 +702,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

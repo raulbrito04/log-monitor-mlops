@@ -224,7 +224,7 @@ jobs:
         run: mkdir -p reports
 
       - name: Trivy scan - flask-app
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: logmonitor/flask-app:ci
           format: sarif
@@ -233,7 +233,7 @@ jobs:
           exit-code: 0
 
       - name: Trivy scan - ml-pipeline
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: logmonitor/ml-pipeline:ci
           format: table

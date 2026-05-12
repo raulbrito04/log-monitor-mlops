@@ -83,18 +83,17 @@ def test_hybrid_pipeline_persists_scores_to_test_db(test_db, clean_db, monkeypat
     monkeypatch.setenv("POSTGRES_USER", str(test_db["user"]))
     monkeypatch.setenv("POSTGRES_PASSWORD", str(test_db["password"]))
 
-    model_path = tmp_path / "model.pkl"
-    model_path.write_bytes(b"placeholder")
     features_path = tmp_path / "features.txt"
     features_path.write_text("status_code\nresponse_time_ms\nendpoint_entropy\n", encoding="utf-8")
 
     mock_model.decision_function.return_value = [-0.2]
     mock_scaler.transform.side_effect = lambda X: X
-    mocker.patch("src.ml.hybrid_pipeline.pickle.load", return_value={"model": mock_model, "scaler": mock_scaler})
+    bundle = {"model": mock_model, "scaler": mock_scaler}
+    mocker.patch("src.ml.hybrid_pipeline._safe_load_pickle", return_value=bundle)
 
     pipeline = HybridPipeline(
-        model_path=str(model_path),
-        scaler_path=str(model_path),
+        model_path="models/model.pkl",
+        scaler_path="models/scaler.pkl",
         features_path=str(features_path),
     )
 

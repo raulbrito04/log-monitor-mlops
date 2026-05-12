@@ -9,8 +9,6 @@ from src.ml.hybrid_pipeline import HybridPipeline
 
 @pytest.fixture
 def pipeline(tmp_path, mocker, mock_model, mock_scaler):
-    model_path = tmp_path / "model.pkl"
-    model_path.write_bytes(b"placeholder")
     features_path = tmp_path / "features.txt"
     features_path.write_text("status_code\nresponse_time_ms\nendpoint_entropy\n", encoding="utf-8")
 
@@ -19,30 +17,30 @@ def pipeline(tmp_path, mocker, mock_model, mock_scaler):
     conn = mocker.Mock()
     conn.cursor.return_value = cursor
 
-    mocker.patch("src.ml.hybrid_pipeline.pickle.load", return_value={"model": mock_model, "scaler": mock_scaler})
+    bundle = {"model": mock_model, "scaler": mock_scaler}
+    mocker.patch("src.ml.hybrid_pipeline._safe_load_pickle", return_value=bundle)
     mocker.patch("src.ml.hybrid_pipeline.psycopg2.connect", return_value=conn)
 
     return HybridPipeline(
-        model_path=str(model_path),
-        scaler_path=str(model_path),
+        model_path="models/model.pkl",
+        scaler_path="models/scaler.pkl",
         features_path=str(features_path),
     )
 
 
 class TestHybridPipelineScoring:
     def test_weights_sum_validation(self, tmp_path, mocker):
-        model_path = tmp_path / "model.pkl"
-        model_path.write_bytes(b"placeholder")
         features_path = tmp_path / "features.txt"
         features_path.write_text("feature1\n", encoding="utf-8")
 
-        mocker.patch("src.ml.hybrid_pipeline.pickle.load", return_value={"model": MagicMock(), "scaler": MagicMock()})
+        bundle = {"model": MagicMock(), "scaler": MagicMock()}
+        mocker.patch("src.ml.hybrid_pipeline._safe_load_pickle", return_value=bundle)
         mocker.patch("src.ml.hybrid_pipeline.psycopg2.connect", return_value=mocker.Mock())
 
-        with pytest.raises(AssertionError):
+        with pytest.raises(ValueError):
             HybridPipeline(
-                model_path=str(model_path),
-                scaler_path=str(model_path),
+                model_path="models/model.pkl",
+                scaler_path="models/scaler.pkl",
                 features_path=str(features_path),
                 rule_weight=0.6,
                 ml_weight=0.6,

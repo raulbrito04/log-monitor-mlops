@@ -27,6 +27,7 @@ models/*.json
 
 # Windows metadata
 *.Zone.Identifier
+*Zone.Identifier*
 
 # Temp/test files
 test.txt
@@ -36,3 +37,7 @@ test.txt
 .coverage
 reports/
 *.sarif
+# Local workspace / scratch docs
+.claude/
+docs/Copy Desktop overview/
+docs/ROADMAP_post_intermedio_work.md

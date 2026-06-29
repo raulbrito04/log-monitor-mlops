@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from datetime import datetime
@@ -16,6 +16,41 @@ class TestLogParser:
 
     def test_parse_log_line_invalid_json_returns_none(self):
         assert ingester.parse_log_line("{invalid json") is None
+
+    def test_parse_apache_combined_line_extracts_http_fields(self):
+        line = (
+            '192.168.1.10 - - [10/Oct/2000:13:55:36 -0700] '
+            '"GET /api/items?id=1 HTTP/1.1" 200 2326 '
+            '"https://example.com" "Mozilla/5.0" 0.123'
+        )
+
+        parsed = ingester.parse_apache_combined_log_line(line)
+
+        assert parsed is not None
+        assert parsed["log_type"] == "apache_access"
+        assert parsed["method"] == "GET"
+        assert parsed["endpoint"] == "/api/items?id=1"
+        assert parsed["status"] == 200
+        assert parsed["bytes_sent"] == 2326
+        assert parsed["response_time_ms"] == pytest.approx(123.0)
+        assert parsed["source_format"] == "apache_combined"
+
+    def test_parse_log_line_auto_detects_apache_access_logs(self):
+        line = (
+            '10.0.0.8 - - [27/Jun/2026:14:03:20 +0000] '
+            '"POST /login HTTP/1.1" 401 512 "-" "curl/8.0"'
+        )
+
+        parsed = ingester.parse_log_line(line, log_format="auto")
+
+        assert parsed is not None
+        assert parsed["method"] == "POST"
+        assert parsed["endpoint"] == "/login"
+        assert parsed["status"] == 401
+
+    def test_parse_log_line_invalid_format_raises(self):
+        with pytest.raises(ValueError):
+            ingester.parse_log_line("{}", log_format="syslog")
 
 
 class TestPrepareLogForInsert:
@@ -86,7 +121,7 @@ class TestBatchInsert:
         assert connect.call_count == 2
         sleep.assert_called_once()
 
-    def test_ingest_from_file_processes_batches(self, tmp_path, mocker):
+    def test_ingest_from_file_processes_json_batches(self, tmp_path, mocker):
         logfile = tmp_path / "sample.log"
         logfile.write_text(
             "\n".join(
@@ -111,6 +146,40 @@ class TestBatchInsert:
         ingester.ingest_from_file(str(logfile), batch_size=2)
 
         assert insert_batch.call_count == 1
+        conn.commit.assert_called_once()
+
+    def test_ingest_from_file_processes_apache_batches(self, tmp_path, mocker):
+        logfile = tmp_path / "access.log"
+        logfile.write_text(
+            "\n".join(
+                [
+                    '10.0.0.1 - - [27/Jun/2026:14:03:20 +0000] "GET /health HTTP/1.1" 200 321 "-" "curl/8.0"',
+                    '10.0.0.2 - - [27/Jun/2026:14:03:21 +0000] "POST /login HTTP/1.1" 401 512 "-" "Mozilla/5.0" 0.250',
+                    'bad apache line',
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        cursor = mocker.Mock()
+        conn = mocker.Mock()
+        conn.cursor.return_value = cursor
+        mocker.patch("src.log_processor.ingester.get_db_connection", return_value=conn)
+        insert_batch = mocker.patch(
+            "src.log_processor.ingester.insert_logs_batch",
+            side_effect=lambda _cursor, batch: len(batch),
+        )
+
+        ingester.ingest_from_file(
+            str(logfile),
+            batch_size=2,
+            log_format="apache_combined",
+        )
+
+        assert insert_batch.call_count == 1
+        apache_batch = insert_batch.call_args[0][1]
+        assert apache_batch[0]["endpoint"] == "/health"
+        assert apache_batch[1]["response_time_ms"] == pytest.approx(250.0)
         conn.commit.assert_called_once()
 
     def test_ingest_from_file_missing_path_exits(self):

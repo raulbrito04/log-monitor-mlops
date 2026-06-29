@@ -3,9 +3,11 @@ set -e
 
 LOG_FILE=${1:-logs/app.log}
 BATCH_SIZE=${2:-500}
+LOG_FORMAT=${3:-json}
 
 echo "=== Ingesting logs from $LOG_FILE ==="
-python src/log_processor/ingester.py "$LOG_FILE" --batch-size "$BATCH_SIZE"
+echo "=== Log format: $LOG_FORMAT ==="
+python src/log_processor/ingester.py "$LOG_FILE" --batch-size "$BATCH_SIZE" --format "$LOG_FORMAT"
 
 echo ""
 echo "=== Verification ==="

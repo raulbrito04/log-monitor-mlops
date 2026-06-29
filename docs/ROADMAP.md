@@ -136,11 +136,14 @@ Semana de validação em duas frentes complementares: (1) provar que a plataform
 
 **2.1 — Teste end-to-end com logs reais externos**
 - Escolher uma fonte real alinhada com o projecto: preferência por **Apache/Nginx access logs**; alternativa: `auth.log`
+- Definir o protocolo de validação operacional: **fonte real Apache/Nginx + tráfego benigno + tráfego malicioso controlado + critérios de avaliação**
+- Recolher uma janela de **tráfego benigno real** para servir de baseline operacional (sem alterar artificialmente o ficheiro)
+- Gerar **tráfego malicioso controlado** contra o mesmo servidor/stack de teste, de forma a produzir eventos maliciosos na mesma fonte real de logs
 - Implementar parser/adaptador da fonte escolhida para o schema interno de ingestão
-- Correr ingestão completa com um conjunto real de logs e validar persistência na base de dados
-- Medir taxa de parsing com sucesso, campos em falta e limitações encontradas
-- Verificar comportamento das regras, scoring ML e visualização no dashboard com essa fonte real
-- Documentar diferenças entre logs sintéticos e logs reais (ruído, formatos, timestamps, campos ausentes)
+- Correr ingestão completa e validar persistência na base de dados para os dois subconjuntos: baseline benigno e cenário malicioso controlado
+- Medir taxa de parsing com sucesso, campos obrigatórios em falta, volume ingerido e limitações encontradas
+- Verificar comportamento das regras, scoring ML e visualização no dashboard separando: falsos positivos no baseline benigno e deteções no tráfego malicioso controlado
+- Documentar diferenças entre logs sintéticos e logs reais (ruído, formatos, timestamps, campos ausentes) e o que ficou fora do alcance desta validação
 
 **2.2 — Validação com CICIDS-2017**
 - Download e pré-processamento do CICIDS-2017 (Sharafaldin et al., 2018)
@@ -168,7 +171,7 @@ O relatório intermédio já cobriu a dimensão de custos. Esta fase cobre a dim
 - Identificar e documentar os gaps desta solução face às alternativas (e.g. escala, correlação multi-fonte, threat intelligence integrada)
 - Análise de onde a solução se diferencia (XAI, MLOps pipeline, open-source) e para que perfil de utilizador/organização é mais adequada
 
-**Critério de saída:** pelo menos uma fonte real de logs ingerida de ponta a ponta · limitações documentadas · F1 e ROC-AUC do benchmark externo registados se a adaptação ao CICIDS-2017 ficar concluída
+**Critério de saída:** pelo menos uma fonte real de logs ingerida de ponta a ponta · baseline benigno e tráfego malicioso controlado documentados · parsing e persistência validados · comportamento das regras/ML avaliado nos dois cenários · F1 e ROC-AUC do benchmark externo registados se a adaptação ao CICIDS-2017 ficar concluída
 
 ---
 
@@ -266,7 +269,7 @@ S21-S22 (incident) → S23 (polimento) — o workflow tem de estar estável ante
 
 | Risco | Probabilidade | Mitigação |
 |-------|--------------|-----------|
-| Fonte real de logs indisponível ou demasiado heterogénea | Média | Priorizar Apache/Nginx access logs; preparar amostra offline para teste controlado |
+| Fonte real de logs indisponível ou demasiado heterogénea | Média | Priorizar Apache/Nginx access logs; preparar amostra offline e cenário de tráfego controlado sobre essa fonte |
 | CICIDS-2017 com formato incompatível | Média | Feature engineering adaptável; 1 semana dedicada |
 | Retraining degrada o modelo | Baixa | MLflow permite rollback imediato para versão anterior |
 | Incident workflow exige mais de 2 semanas | Média | Simplificar para 2 estados (OPEN/CLOSED) se necessário |

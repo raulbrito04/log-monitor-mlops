@@ -1,4 +1,4 @@
-﻿services:
+services:
   postgres:
     image: timescale/timescaledb:latest-pg16
     container_name: logmonitor-postgres
@@ -96,6 +96,26 @@
       - frontend
     restart: unless-stopped
 
+  nginx-validation:
+    image: nginx:1.27-alpine
+    container_name: logmonitor-nginx-validation
+    ports:
+      - "8088:8080"
+    volumes:
+      - ./nginx/validation.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      flask-app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/health >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - backend
+      - frontend
+    restart: unless-stopped
   dashboard:
     build:
       context: ..
@@ -136,6 +156,7 @@
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
       LOG_FILE: /app/logs/app.log
+      INGESTER_LOG_FORMAT: ${INGESTER_LOG_FORMAT:-json}
       INGESTER_BATCH_SIZE: "100"
       INGESTER_POLL_INTERVAL: "10"
     volumes:

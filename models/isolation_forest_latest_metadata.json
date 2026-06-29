@@ -1,0 +1,28 @@
+{
+  "threshold": 0.0949109030081742,
+  "saved_at": "2026-03-23T13:00:22.188141",
+  "tracking_uri": "http://localhost:5000",
+  "model_family": "isolation_forest",
+  "train_on_normals_only": true,
+  "feature_set": "all_features",
+  "feature_names": [
+    "status_code",
+    "response_time_ms",
+    "requests_per_ip_5min",
+    "unique_endpoints_5min",
+    "hour_of_day",
+    "day_of_week",
+    "is_night",
+    "endpoint_length",
+    "has_query_params",
+    "endpoint_entropy",
+    "time_since_last_request",
+    "requests_per_minute",
+    "response_time_log",
+    "response_time_zscore_endpoint",
+    "requests_vs_ip_baseline_ratio",
+    "endpoint_rarity",
+    "error_burst_score",
+    "hour_deviation_from_endpoint_pattern"
+  ]
+}

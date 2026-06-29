@@ -7,6 +7,10 @@ __pycache__/
 .coverage
 venv/
 mlruns/
-data/postgres/
+data/*
+!data/selected_features.txt
+models/*
+!models/isolation_forest_latest.pkl
+!models/isolation_forest_latest_metadata.json
 logs/*.log
 *.ipynb

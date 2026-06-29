@@ -242,7 +242,7 @@ jobs:
 
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && hashFiles('reports/trivy-flask.sarif') != ''
         with:
           sarif_file: reports/trivy-flask.sarif
 

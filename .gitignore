@@ -11,7 +11,8 @@ __pycache__/
 .Python
 
 # Data
-data/
+data/*
+!data/selected_features.txt
 logs/
 
 # Database backups
@@ -22,8 +23,9 @@ backup_*.sql
 # ML artefacts
 mlruns/
 experiments/
-models/*.pkl
-models/*.json
+models/*
+!models/isolation_forest_latest.pkl
+!models/isolation_forest_latest_metadata.json
 
 # Windows metadata
 *.Zone.Identifier

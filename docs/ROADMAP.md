@@ -1,6 +1,6 @@
 # Roadmap — Log Monitor MLOps
 **Raúl Brito · A22309632 · IPLUSO 2026**
-**Atualizado: 07/05/2026 · Estado: Semana 15**
+**Atualizado: 25/06/2026 · Estado: Goal D em curso**
 
 ---
 
@@ -16,6 +16,43 @@
 
 **Milestone de entrega:** 11 Jul 2026 — Relatório Final
 **Discussão:** 01 Ago 2026
+
+---
+
+## Ambiente de Desenvolvimento — Fonte de Logs
+
+### Fonte utilizada no desenvolvimento
+
+O ambiente de desenvolvimento não dispõe de uma fonte de logs global/centralizada externa. Os logs processados durante o desenvolvimento foram gerados sinteticamente pela própria aplicação Flask (`logs/app.log`), com os seguintes tipos de eventos:
+
+- Pedidos HTTP com campos `ip`, `timestamp`, `method`, `endpoint`, `status_code`, `bytes`, `response_time`
+- Eventos de autenticação (login normal, brute-force simulado, falhas repetidas)
+- Anomalias injectadas manualmente para treino e validação do modelo (port scans, exfiltração simulada, padrões de acesso irregular)
+
+O gerador de logs sintéticos (`scripts/generate_logs.py`) permite reproduzir cenários de ataque controlados, o que é necessário para avaliar o modelo em condições conhecidas.
+
+### Logs que a ferramenta poderia processar em contexto real
+
+Caso esta ferramenta seja adoptada num ambiente de produção, está preparada para processar qualquer fonte de logs que seja adaptada ao schema de ingestão:
+
+| Tipo de fonte | Formato | Adaptação necessária |
+|---------------|---------|---------------------|
+| Apache / Nginx (access log) | Combined Log Format | Parser de linha para extrair campos HTTP |
+| Logs de autenticação Linux | `/var/log/auth.log` (syslog) | Extracção de eventos SSH/PAM |
+| Logs de containers (Docker/k8s) | JSON (stdout) | Mapeamento de campos para o schema interno |
+| Logs de aplicação genérica | JSON estruturado | Configuração do mapeamento de campos |
+| Logs de firewalls/IDS | Syslog / CEF | Adaptador de formato (a desenvolver) |
+
+Se existir uma fonte de logs global no ambiente institucional (e.g. servidor syslog centralizado, ELK Stack, ou SIEM existente), esta ferramenta pode ser integrada como camada de análise ML adicional, recebendo os logs via API de ingestão.
+
+### Implicação para o Goal D
+
+O feedback recebido após a apresentação intercalar clarificou um ponto importante: **benchmark externo não substitui validação com logs reais**. O projeto precisa de demonstrar não só que o modelo generaliza para um dataset externo, mas também que a pipeline completa consegue ingerir, normalizar, persistir e analisar **uma fonte real de logs** de ponta a ponta.
+
+Assim, no Goal D, a prioridade de validação passa a ser:
+
+1. **Teste end-to-end com logs reais externos** (preferência: Apache/Nginx access logs, por estarem mais próximos do schema actual)
+2. **Benchmark técnico com CICIDS-2017** como validação complementar do modelo
 
 ---
 
@@ -93,17 +130,48 @@ Com feedback humano acumulado, o sistema deve ser capaz de retreinar o modelo de
 ---
 
 ### 📅 S19 · 01 Jun – 07 Jun
-**Objectivo: Benchmark com dataset CICIDS-2017**
+**Objectivo: Validação com logs reais externos + benchmark técnico**
 
-Validação externa do modelo com dados reais de intrusão — até agora os resultados foram medidos em dados sintéticos. O CICIDS-2017 (Sharafaldin et al., 2018) é o dataset de referência na literatura.
+Semana de validação em duas frentes complementares: (1) provar que a plataforma consegue processar **logs reais** de ponta a ponta; (2) complementar essa prova com benchmark externo do modelo e posicionamento funcional face às ferramentas já identificadas no relatório intermédio (Wazuh, Elastic SIEM, Splunk SIEM, IBM QRadar, Azure Sentinel).
 
-- Download e pré-processamento do CICIDS-2017
+**2.1 — Teste end-to-end com logs reais externos**
+- Escolher uma fonte real alinhada com o projecto: preferência por **Apache/Nginx access logs**; alternativa: `auth.log`
+- Definir o protocolo de validação operacional: **fonte real Apache/Nginx + tráfego benigno + tráfego malicioso controlado + critérios de avaliação**
+- Recolher uma janela de **tráfego benigno real** para servir de baseline operacional (sem alterar artificialmente o ficheiro)
+- Gerar **tráfego malicioso controlado** contra o mesmo servidor/stack de teste, de forma a produzir eventos maliciosos na mesma fonte real de logs
+- Implementar parser/adaptador da fonte escolhida para o schema interno de ingestão
+- Correr ingestão completa e validar persistência na base de dados para os dois subconjuntos: baseline benigno e cenário malicioso controlado
+- Medir taxa de parsing com sucesso, campos obrigatórios em falta, volume ingerido e limitações encontradas
+- Verificar comportamento das regras, scoring ML e visualização no dashboard separando: falsos positivos no baseline benigno e deteções no tráfego malicioso controlado
+- Documentar diferenças entre logs sintéticos e logs reais (ruído, formatos, timestamps, campos ausentes) e o que ficou fora do alcance desta validação
+
+**2.2 — Validação com CICIDS-2017**
+- Download e pré-processamento do CICIDS-2017 (Sharafaldin et al., 2018)
 - Adaptação do feature engineering para o formato do dataset
 - Avaliação do Isolation Forest e do ensemble no CICIDS-2017
 - Comparação de métricas: dados sintéticos vs CICIDS-2017
 - Documentação dos resultados e análise de diferenças
 
-**Critério de saída:** F1 e ROC-AUC medidos no CICIDS-2017 · análise comparativa documentada
+**2.3 — Benchmarking funcional face às soluções existentes**
+
+O relatório intermédio já cobriu a dimensão de custos. Esta fase cobre a dimensão funcional: o que faz esta solução que as alternativas não fazem, e onde fica aquém.
+
+| Dimensão funcional | Wazuh | Elastic SIEM | Splunk SIEM | **Log Monitor MLOps** |
+|--------------------|-------|-------------|-------------|----------------------|
+| Detecção rule-based | ✅ | ✅ | ✅ | ✅ |
+| Detecção ML (Isolation Forest) | ❌ | Parcial | Parcial | ✅ |
+| Ensemble ML (IF + RF) | ❌ | ❌ | ❌ | ✅ |
+| Explicabilidade XAI (SHAP) | ❌ | ❌ | ❌ | ✅ |
+| Pipeline MLOps (MLflow) | ❌ | ❌ | ❌ | ✅ |
+| Human-in-loop / feedback | ❌ | Limitado | Limitado | ✅ (S17–S18) |
+| Open-source, sem licença | ✅ | Parcial | ❌ | ✅ |
+| Deployment local via Docker | ✅ | ✅ | Limitado | ✅ |
+
+- Documentar a tabela comparativa com referências às fontes utilizadas no relatório intermédio
+- Identificar e documentar os gaps desta solução face às alternativas (e.g. escala, correlação multi-fonte, threat intelligence integrada)
+- Análise de onde a solução se diferencia (XAI, MLOps pipeline, open-source) e para que perfil de utilizador/organização é mais adequada
+
+**Critério de saída:** pelo menos uma fonte real de logs ingerida de ponta a ponta · baseline benigno e tráfego malicioso controlado documentados · parsing e persistência validados · comportamento das regras/ML avaliado nos dois cenários · F1 e ROC-AUC do benchmark externo registados se a adaptação ao CICIDS-2017 ficar concluída
 
 ---
 
@@ -189,7 +257,8 @@ Movido para depois da entrega para não criar risco sobre o relatório. Se funci
 
 ```
 S17 (UI feedback) → S18 (retraining) — o retraining só faz sentido com dados de feedback
-S19 (CICIDS) → relatório final — os resultados do benchmark vão para o relatório
+S19 (logs reais) → relatório final — a prova de ingestão real sustenta a aplicabilidade da solução
+S19 (CICIDS) → relatório final — o benchmark externo complementa, mas não substitui, a validação com logs reais
 S20 (LIME) → S21 (incident workflow) — podem ser paralelos se necessário
 S21-S22 (incident) → S23 (polimento) — o workflow tem de estar estável antes do fecho
 ```
@@ -200,8 +269,11 @@ S21-S22 (incident) → S23 (polimento) — o workflow tem de estar estável ante
 
 | Risco | Probabilidade | Mitigação |
 |-------|--------------|-----------|
+| Fonte real de logs indisponível ou demasiado heterogénea | Média | Priorizar Apache/Nginx access logs; preparar amostra offline e cenário de tráfego controlado sobre essa fonte |
 | CICIDS-2017 com formato incompatível | Média | Feature engineering adaptável; 1 semana dedicada |
 | Retraining degrada o modelo | Baixa | MLflow permite rollback imediato para versão anterior |
 | Incident workflow exige mais de 2 semanas | Média | Simplificar para 2 estados (OPEN/CLOSED) se necessário |
 | Cobertura ≥85% não atingida em S23 | Média | Incremento gradual S17–S22; S23 é buffer, não sprint |
 | Cloud POC com problemas de rede/configuração | Alta | Movido para pós-entrega — sem impacto no relatório |
+
+

@@ -104,6 +104,43 @@ class FeatureEngineer:
             print(f"   ✗ Erro ao carregar dados: {e}")
             raise
     
+    def _prepare_raw_logs_frame(self, df):
+        """Normaliza logs crus para suportar fontes reais com campos em falta."""
+        df = df.copy()
+        fallback_timestamp = pd.Timestamp.now(tz='UTC')
+
+        def ensure_series(column, default_value):
+            if column in df.columns:
+                return df[column]
+            return pd.Series([default_value] * len(df), index=df.index)
+
+        df['timestamp'] = pd.to_datetime(
+            ensure_series('timestamp', fallback_timestamp),
+            utc=True,
+            errors='coerce',
+        ).fillna(fallback_timestamp)
+        df['ip'] = ensure_series('ip', '0.0.0.0').fillna('0.0.0.0').astype(str)
+        df['method'] = ensure_series('method', 'UNKNOWN').fillna('UNKNOWN').astype(str)
+        df['endpoint'] = ensure_series('endpoint', '/unknown').fillna('/unknown').astype(str)
+        df['user_agent'] = ensure_series('user_agent', 'unknown').fillna('unknown').astype(str)
+
+        status = pd.to_numeric(ensure_series('status', 0), errors='coerce').fillna(0)
+        df['status'] = status.astype(int)
+
+        response_time = pd.to_numeric(
+            ensure_series('response_time_ms', np.nan),
+            errors='coerce',
+        )
+        response_time_median = response_time.dropna().median()
+        if pd.isna(response_time_median):
+            response_time_median = 0.0
+        df['response_time_ms'] = response_time.fillna(float(response_time_median)).astype(float)
+
+        df['data'] = ensure_series('data', {}).apply(
+            lambda payload: payload if isinstance(payload, dict) else {}
+        )
+        return df
+
     def extract_features(self, df):
         """
         Pipeline completo de extração de features
@@ -118,8 +155,8 @@ class FeatureEngineer:
         print("FEATURE ENGINEERING PIPELINE")
         print("="*70 + "\n")
         
-        # Cria cópia para não modificar original
-        df = df.copy()
+        # Cria c?pia normalizada para suportar fontes reais
+        df = self._prepare_raw_logs_frame(df)
         
         # Pipeline de extração
         features = self._numeric_features(df)

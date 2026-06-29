@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Hybrid Detection Pipeline - Semana 7
 Combina Rule Engine (Semana 4) com Isolation Forest (Semana 6)
@@ -117,6 +117,7 @@ class HybridPipeline:
     def get_ml_score(self, log_features: dict):
         row = {col: log_features.get(col, 0.0) for col in self.feature_cols}
         x_frame = pd.DataFrame([row])
+        x_frame = x_frame.apply(pd.to_numeric, errors='coerce').replace([np.inf, -np.inf], np.nan).fillna(0.0)
         x_scaled = self.scaler.transform(x_frame)
         raw_score = self.model.decision_function(x_scaled)[0]
         raw_clamped = np.clip(raw_score, -0.5, 0.5)

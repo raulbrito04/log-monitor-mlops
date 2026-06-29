@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from unittest.mock import MagicMock
 
@@ -67,6 +67,14 @@ class TestHybridPipelineScoring:
 
         assert 0.99 <= score <= 1.0
         assert 0.0 <= confidence <= 1.0
+
+    def test_get_ml_score_replaces_nan_features_before_inference(self, pipeline, mock_scaler):
+        pipeline.get_ml_score(
+            {"status_code": 401.0, "response_time_ms": float("nan"), "endpoint_entropy": 1.2}
+        )
+
+        transformed_frame = mock_scaler.transform.call_args[0][0]
+        assert transformed_frame.iloc[0]["response_time_ms"] == 0.0
 
     def test_combine_scores_applies_critical_override(self, pipeline):
         result = pipeline.combine_scores(rule_score=1.0, ml_score=0.0)
